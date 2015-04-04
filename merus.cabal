@@ -12,27 +12,64 @@ category: Game
 build-type: Simple
 cabal-version: >=1.10
 
+flag demo
+    description: Build Demo
+    default: False
+
 library
     exposed-modules:
         Merus
     -- other-modules: 
-    other-extensions:
-        RecordWildCards,
-        TemplateHaskell,
-        KindSignatures,
-        OverloadedStrings,
-        LambdaCase,
-        Rank2Types,
-        MultiWayIf
+    default-extensions:
+        RecordWildCards
+        TemplateHaskell
+        KindSignatures
+        Rank2Types
     build-depends:
-        base >=4.7 && <4.8,
-        vector >=0.10 && <0.11,
-        containers >=0.5 && <0.6,
-        sdl2 >=2.0 && <2.1,
-        transformers >=0.3 && <0.4,
-        lens >=4.7 && <4.8,
-        linear >=1.16 && <1.17,
-        StateVar >=1.1 && <1.2,
-        data-default >=0.5 && <0.6
+        base >=4.7 && <5,
+        lens >=4.6 && <4.8,
+        linear >=1.16 && <1.19
     hs-source-dirs: src
+    default-language: Haskell2010
+
+test-suite spec
+    type: exitcode-stdio-1.0
+    ghc-options: -Wall
+    hs-source-dirs: test
+    main-is: Spec.hs
+    --other-modules:
+    build-depends:
+        base >=4.7 && <5,
+        hspec-core,
+        hspec,
+        directory,
+        stringbuilder,
+        hspec-meta >= 2.1.5
+
+executable demo
+    main-is: Main.hs
+    default-extensions:
+        RecordWildCards
+        TemplateHaskell
+        KindSignatures
+        OverloadedStrings
+        LambdaCase
+        Rank2Types
+        MultiWayIf
+    if flag(demo)
+        build-depends:
+            base >=4.7 && <5,
+            vector >=0.10 && <0.11,
+            containers >=0.5 && <0.6,
+            sdl2 >=2.0 && <2.1,
+            transformers >=0.3 && <0.4,
+            lens >=4.6 && <4.8,
+            linear >=1.16 && <1.19,
+            StateVar >=1.1 && <1.2,
+            data-default >=0.5 && <0.6,
+            mtl >=2.0 && <2.3,
+            merus
+    else
+        buildable: False
+    hs-source-dirs: demo
     default-language: Haskell2010
