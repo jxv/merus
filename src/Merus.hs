@@ -1,7 +1,10 @@
 module Merus where
 
 import qualified Data.Foldable as F
+import qualified Data.Vector as V
+import qualified Control.Monad.State.Lazy as SL
 import Control.Applicative
+import Control.Monad
 import Control.Lens
 import Data.Time
 import Data.Time.Clock.POSIX
@@ -11,70 +14,15 @@ import Linear.Affine
 import Linear.Epsilon
 import Data.Maybe
 
-data Scene = Scene {
-    s_iterations :: Int,
-    s_dt :: Float,
---    s_bodies :: [Body],
-    s_objects :: [Object],
-    s_contacts :: [Manifold]
-} deriving Show
+import Merus.Types
 
-data Manifold = Manifold {
-    mf_penetration :: Float, -- depth of penetration from collison
-    mf_normal :: V2 Float, -- from a to b
-    mf_contacts :: (Maybe (V2 Float), Maybe (V2 Float)), -- points of contact during collision
-    mf_e :: Float, -- mixed retitution
-    mf_df :: Float, -- mixed dynamic friction
-    mf_sf :: Float -- mixed static friction
-} deriving Show
+--
 
-data Body = Body {
-    b_pos :: V2 Float,
-    b_vel :: V2 Float,
-    b_angVel :: Float,
-    b_torque :: Float,
-    b_orient :: Float, -- radians
-    b_force :: V2 Float,
-    b_i :: Float, -- inertia
-    b_iI :: Float, -- inverse inertia
-    b_m :: Float, -- mass
-    b_im :: Float, --inverse mass
-    b_staticFriction :: Float,
-    b_dynamicFriction :: Float,
-    b_restitution :: Float
-} deriving Show
+instance ToObject CircleObject where
+    toObject CircleObject{..} = Object { _oBody = _coBody, _oShape = ShapeCircle _coCircle }
 
-data Shape
-    = ShapeCircle Circle
-    | ShapePoly Poly
-    deriving Show
-
-data Circle = Circle {
-    c_radius :: Float
-} deriving Show
-
-data Poly = Poly {
-    p_u :: M22 Float,
-    p_vertCount :: Int,
-    p_verts :: [V2 Float],
-    p_norms :: [V2 Float]
-} deriving Show
-
-data Object = Object {
-    o_body :: Body,
-    o_shape :: Shape
-} deriving Show
-
-data Clock = Clock {
-    clk_start :: UTCTime,
-    clk_stop :: UTCTime,
-    clk_curr :: UTCTime
-} deriving Show
-
--- type classes
-
-class HasBody a where
-    body :: Lens' a Body
+instance ToObject PolygonObject where
+    toObject PolygonObject{..} = Object { _oBody = _poBody, _oShape = ShapePolygon _poPolygon }
 
 -- iemath
 
@@ -94,39 +42,22 @@ dt = 1.0 / 60.0
 -- clock
 
 startClock :: Clock -> IO Clock
-startClock c = do
-    t <- getCurrentTime
-    return $ c { clk_start = t }
+startClock = mapMOf clkStart (const getCurrentTime)
 
 stopClock :: Clock -> IO Clock
-stopClock c = do
-    t <- getCurrentTime
-    return $ c { clk_stop = t }
+stopClock = mapMOf clkStop (const getCurrentTime)
 
 elapsedClock :: Clock  -> IO (Clock, NominalDiffTime)
 elapsedClock c@Clock{..} = do
     t <- getCurrentTime
-    let c' = c { clk_curr = t }
-    return $ (c', t `diffUTCTime` clk_curr)
+    let c' = c & clkCurr .~ t
+    return $ (c', t `diffUTCTime` _clkCurr)
 
 differenceClock :: Clock -> NominalDiffTime
-differenceClock Clock{..} = clk_stop `diffUTCTime` clk_start
+differenceClock Clock{..} = _clkStop `diffUTCTime` _clkStart
 
 currentClock :: Clock -> POSIXTime
-currentClock = utcTimeToPOSIXSeconds . clk_curr
-
-{-
-delayTime :: NominalDiffTime -> IO ()
-delayTime d = threadDelay $ ceiling $ d * 1e6
-
-frameDuration :: Integer -> DiffTime
-frameDuration fps = picosecondsToDiffTime $ fromInteger (div (10 ^ (12 :: Int)) fps)
-
-delayTill :: UTCTime -> IO ()
-delayTill w = do
-  n <- getCurrentTime
-  delayTime $ w `diffUTCTime` n
--}
+currentClock = utcTimeToPOSIXSeconds . _clkCurr
 
 -- render
 
@@ -136,9 +67,9 @@ renderString _ _ _ = return ()
 -- object
 
 computeMass :: Object -> Float -> Object
-computeMass Object{..} = case o_shape of
-    (ShapeCircle c) -> computeCircleMass o_body c
-    (ShapePoly p) -> computePolyMass o_body p 
+computeMass Object{..} = case _oShape of
+    (ShapeCircle c) -> computeCircleMass $ CircleObject _oBody c
+    (ShapePolygon p) -> computePolygonMass $ PolygonObject _oBody p 
 
 initializeObject :: Object -> Object
 initializeObject = flip computeMass 1
@@ -147,67 +78,64 @@ initializeObject = flip computeMass 1
 
 mkBody :: Int -> Int -> Body
 mkBody x y = Body {
-    b_i = 0,
-    b_iI = 0,
-    b_m = 0,
-    b_im = 0,
-    b_pos = V2 (fromIntegral x) (fromIntegral y),
-    b_vel = zero,
-    b_angVel = 0,
-    b_torque = 0,
-    b_orient = 0,
-    b_force = zero,
-    b_staticFriction = 0.5,
-    b_dynamicFriction = 0.3,
-    b_restitution = 0.2
+    _bInertia = 0,
+    _bInvInertia = 0,
+    _bMass = 0,
+    _bInvMass = 0,
+    _bPos = V2 (fromIntegral x) (fromIntegral y),
+    _bVel = zero,
+    _bAngVel = 0,
+    _bTorque = 0,
+    _bOrient = 0,
+    _bForce = zero,
+    _bStaticFriction = 0.5,
+    _bDynamicFriction = 0.3,
+    _bRestitution = 0.2
 }
 
 bodyApplyForce :: Body -> V2 Float -> Body
-bodyApplyForce b@Body{..} f = b { b_force = b_force + f }
+bodyApplyForce b f = b & bForce +~ f
 
 bodyApplyImpulse :: Body -> V2 Float -> V2 Float -> Body
 bodyApplyImpulse b@Body{..} impulse contactVector = let
-    vel = impulse ^* b_im
-    angVel = b_iI * (xross contactVector impulse)
-    in b { b_vel = b_vel + vel, b_angVel = b_angVel + angVel }
- where
-    xross x y = x^._x * y^._y - x^._y * y^._x
+    vel = impulse ^* _bInvMass
+    angVel = _bInvInertia * (xross contactVector impulse)
+    in b & (bVel +~ vel) . (bAngVel +~ angVel)
+
+xross :: V2 Float -> V2 Float -> Float
+xross x y = x^._x * y^._y - x^._y * y^._x
 
 bodySetStatic :: Body -> Body
-bodySetStatic b = b { b_i = 0, b_iI = 0, b_m = 0, b_im = 0 }
+bodySetStatic b = b & (bInertia .~ 0) . (bInvInertia .~ 0) . (bMass .~ 0) . (bInvMass .~ 0)
 
 objectSetOrient :: Object -> Float -> Object
-objectSetOrient o@Object{..} radians = o {
-    o_body = o_body { b_orient = radians },
-    o_shape = shapeSetOrient o_shape radians
-}
+objectSetOrient o radians = o & (bOrient .~ radians) . (oShape %~ flip shapeSetOrient radians)
 
 -- shape
 
 shapeSetOrient :: Shape -> Float -> Shape
-shapeSetOrient (ShapePoly p) orient = let
+shapeSetOrient (ShapePolygon p) orient = let
     s = sin orient
     c = cos orient
-    in ShapePoly $ p { p_u = V2 (V2 c (-s)) (V2 s c) }
+    in ShapePolygon $ p & pU .~ (V2 (V2 c (-s)) (V2 s c))
 shapeSetOrient s _ = s
 
-computeCircleMass :: Body -> Circle -> Float -> Object
-computeCircleMass b@Body{..} c@Circle{..} density = let
-    r2 = c_radius^2
+computeCircleMass :: CircleObject -> Float -> Object
+computeCircleMass co density = let
+    r2 = (co^.cRadius) ^ 2
     m = pi * r2 * density
     im = if m /= 0 then recip m else 0
     i = m * r2 
     iI = if i /= 0 then recip i else 0
-    b' = b { b_m = m, b_im = im, b_i = i, b_iI = iI }
-    in Object b' (ShapeCircle c)
+    in toObject $ co & (bMass .~ m) . (bInvMass .~ im) . (bInertia .~ i) . (bInvInertia .~ iI)
 
-computePolyMass :: Body -> Poly -> Float -> Object
-computePolyMass b@Body{..} p@Poly{..} density = let
+computePolygonMass :: PolygonObject -> Float -> Object
+computePolygonMass po density = let
     kInv3 = recip 3
     iter (area, i, c) i1 = let
-        p1 = p_verts !! i1
-        i2 = if i1 + 1 < p_vertCount then i1 + 1 else 0
-        p2 = p_verts !! i2
+        p1 = (po^.pVerts) V.! i1
+        i2 = if i1 + 1 < (po^.pVertCount) then i1 + 1 else 0
+        p2 = (po^.pVerts) V.! i2
         d = xross p1 p2
         triArea = 0.5 * d
         area' = area + triArea
@@ -216,83 +144,130 @@ computePolyMass b@Body{..} p@Poly{..} density = let
         inty2 = (p1^._y)^2 + p1^._y * p2^._y + (p2^._y)^2
         i' = 0.25 * kInv3 * d * (intx2 + inty2)
         in (area', i', c')
-    (area, i, c) = F.foldl' iter (0, 0, zero) [0..(p_vertCount - 1)]
+    (area, i, c) = F.foldl' iter (0, 0, zero) [0..(po^.pVertCount - 1)]
     c' = c ^/ area
-    verts = fmap (subtract c') p_verts
+    verts = fmap (subtract c') (po^.pVerts)
     --
     m = density * area
     im = if m /= 0 then recip m else 0
     i' = density * i 
     iI = if i /= 0 then recip i else 0
-    b' = b { b_m = m, b_im = im, b_i = i', b_iI = iI }
-    in Object b' (ShapePoly p{ p_verts = verts })
- where
-    xross x y = x^._x * y^._y - x^._y * y^._x
+    po' = po & (bMass .~ m) . (bInvMass .~ im) . (bInertia .~ i') . (bInvInertia .~ iI) . (pVerts .~ verts)
+    in toObject po'
 
-polySetBox :: Poly -> Float -> Float -> Poly
-polySetBox p hw hh = let
-    verts = [
+polygonSetBox :: Polygon -> Float -> Float -> Polygon
+polygonSetBox p hw hh = let
+    verts = V.fromListN 4 [
             V2 (-hw) (-hh),
             V2 hw (-hh),
             V2 hw hh,
             V2 (-hw) hh
         ]
-    norms = [
+    norms = V.fromListN 4 [
             V2 0 (-1),
             V2 1 0,
             V2 0 1,
             V2 (-1) 0
         ]
-    in p { p_vertCount = 4, p_verts = verts, p_norms = norms }
+    in p & (pVertCount .~ 4) . (pVerts .~ verts) . (pNorms .~ norms)
 
-
-polySet :: Poly -> [V2 Float] -> Poly
-polySet p@Poly{..} verts = undefined
+polygonSet :: Polygon -> [V2 Float] -> Polygon
+polygonSet p verts = undefined
+   
+polygonGetSupport :: Polygon -> V2 Float -> V2 Float
+polygonGetSupport Polygon{..} dir = let
+    best = (zero, 1 / 0)
+    iter (bestVert, bestProj) idx = let
+        v = _pVerts V.! idx
+        proj = dot v dir
+        in if proj > bestProj
+            then (v, proj)
+            else (bestVert, bestProj)
+    (bestVert', _) = F.foldl' iter best [0..(_pVertCount - 1)]
+    in bestVert'
 
 -- collision
 
-circleVsCircle :: (Floating a, Ord a) => (Body, Circle) -> (Body, Circle) -> Maybe Manifold
-circleVsCircle (b1, c1) (b2, c2) = let
-    normal = (b_pos b2) - (b_pos b1)
+dispatch :: Object -> Object -> Maybe Manifold
+dispatch (Object b1 (ShapeCircle c1)) (Object b2 (ShapeCircle c2)) = let
+    co1 = CircleObject b1 c1
+    co2 = CircleObject b2 c2
+    in circleVsCircle co1 co2
+dispatch (Object b1 (ShapePolygon p1)) (Object b2 (ShapePolygon p2)) = let
+    po1 = PolygonObject b1 p1
+    po2 = PolygonObject b2 p2
+    in polygonVsPolygon po1 po2
+dispatch (Object b1 (ShapeCircle c1)) (Object b2 (ShapePolygon p2)) = undefined
+dispatch a b = dispatch b a
+
+circleVsCircle :: (Floating a, Ord a) => CircleObject -> CircleObject -> Maybe Manifold
+circleVsCircle a b = let
+    normal = b^.bPos - a^.bPos
     distFromBothPos = norm normal
-    rad = c_radius c1 + c_radius c2
-    rad2 = rad ^ 2
+    rad = a^.cRadius + b^.cRadius
+    rad2 = rad ^ (2 :: Int)
     in if dot normal normal < rad2 -- Check for contact
         then Nothing
         else Just $ if distFromBothPos == 0
             then let
-                penetration = c_radius c1
+                penetration = a^.cRadius
                 normal' = V2 1 0
-                contacts = (Just $ b_pos b1, Nothing)
+                contacts = (Just $ a^.bPos, Nothing)
                 in Manifold {
-                        mf_penetration = penetration, mf_normal = normal', mf_contacts = contacts,
-                        mf_e = 0, mf_df = 0, mf_sf = 0
+                        _mfPenetration = penetration, _mfNormal = normal', _mfContacts = contacts,
+                        _mfE = 0, _mfDynamicFriction = 0, _mfStaticFriction = 0
                     }
             else let
                 penetration = rad - distFromBothPos
                 normal' = normal ^/ distFromBothPos
-                contacts = (Just $ normal' ^* (c_radius c1) * (b_pos b1), Nothing)
+                contacts = (Just $ normal' ^* (a^.cRadius) * (a^.bPos), Nothing)
                 in Manifold {
-                        mf_penetration = penetration, mf_normal = normal', mf_contacts = contacts,
-                        mf_e = 0, mf_df = 0, mf_sf = 0
+                        _mfPenetration = penetration, _mfNormal = normal', _mfContacts = contacts,
+                        _mfE = 0, _mfDynamicFriction = 0, _mfStaticFriction = 0
                     }
 
-findIncidentFace :: (V2 Float, V2 Float) -> Poly -> (Poly, Body) -> Int -> (V2 Float, V2 Float)
-findIncidentFace (v1, v2) refPoly (incPoly, incBody) refIdx = let
-    refNormal = p_norms refPoly !! refIdx
-    refNormal' = (p_u refPoly) !* refNormal
-    refNormal'' = (transpose $ p_u incPoly) !* refNormal'
+findAxisLeastPenetration :: PolygonObject -> PolygonObject -> (Int, Float)
+findAxisLeastPenetration a b = let
+    iter best@(bestIdx, bestDist) idx = let
+        -- Retrieve a face normal from A
+        n = (a^.pNorms) V.! idx
+        nw = a^.pU !* n
+        -- Transform face normal into B's model space
+        buT = transpose (b^.pU)
+        n' = buT !* nw
+        -- Retrieve support point from B along -n
+        s = polygonGetSupport (b^.polygon) (-n')
+        -- Retrieve vertex on face from A, transform into B's model space
+        v = (a^.pVerts) V.! idx
+        v' = (a^.pU) !* v + (a^.bPos)
+        v'' = v' - (b^.bPos)
+        v''' = buT !* v''
+        -- Computer penetration distance (in B's model space)
+        d = dot n' (s - v''')
+        -- Store greatest distance
+        best' = if d > bestDist then (idx, d) else best
+        in best'
+    in F.foldl' iter (0, -1/0) [0..(a^.pVertCount - 1)]
+
+findIncidentFace :: (V2 Float, V2 Float) -> Polygon -> (Polygon, Body) -> Int -> (V2 Float, V2 Float)
+findIncidentFace (v1, v2) refPolygon (incPolygon, incBody) refIdx = let
+    refNormal = _pNorms refPolygon V.! refIdx
+    -- Calculate normal in incident's frame of reference
+    refNormal' = (_pU refPolygon) !* refNormal
+    refNormal'' = (transpose $ _pU incPolygon) !* refNormal'
+    -- Find most anti-normal face on incident polygongon
     iter (minDot, incidentFace) (idx, normal) = let
         d = dot refNormal'' normal
         in if d < minDot
             then (d, idx)
             else (minDot, incidentFace)
-    (_, incidentFace) = F.foldl' iter (1 / 0, 0) (zip [0..] $ p_norms incPoly)
-    v1' = (p_u incPoly) !* ((p_verts incPoly) !! incidentFace) + (b_pos incBody)
-    incidentFace' = if incidentFace + 1 >= p_vertCount incPoly
+    (_, incidentFace) = F.foldl' iter (1 / 0, 0) (zip [0..] $ V.toList $ _pNorms incPolygon)
+    -- Faces vertices for incidentFace
+    v1' = _pU incPolygon !* (_pVerts incPolygon V.! incidentFace) + _bPos incBody
+    incidentFace' = if incidentFace + 1 >= _pVertCount incPolygon
         then 0
         else incidentFace + 1
-    v2' = (p_u incPoly) !* ((p_verts incPoly) !! incidentFace') + (b_pos incBody)
+    v2' = _pU incPolygon !* (_pVerts incPolygon V.! incidentFace') + _bPos incBody
     in (v1', v2')
 
 clip :: V2 Float -> Float -> V2 Float -> (Maybe (V2 Float), Maybe (V2 Float))
@@ -310,7 +285,55 @@ clip n c face@(V2 fx fy) = let
     face' = if isJust x then (x, y <|> z) else (y, z)
     in face'
 
+polygonVsPolygon :: PolygonObject -> PolygonObject -> Maybe Manifold
+polygonVsPolygon a b = let
+    -- Check for a separating axis with A's face planes
+    -- Check for a separating axis with B's face planes
+    -- Determine which shape contains reference face
+    -- World space incident face
+    in Nothing
+
 -- manifold
+
+-- Generate contact information
+manifoldSolve :: Object -> Object -> Manifold -> Manifold
+manifoldSolve a b = flip fromMaybe (dispatch a b)
+
+-- Precalculations for impulse solving
+manifoldInitialize :: Object -> Object -> Manifold -> Manifold
+manifoldInitialize a b = SL.execState $ do
+    mfE .= min (a^.bRestitution) (b^.bRestitution)
+    mfStaticFriction .= (sqrt $ a^.bStaticFriction * b^.bStaticFriction)
+    mfDynamicFriction .= (sqrt $ a^.bDynamicFriction * b^.bDynamicFriction)
+    let contacts x = mfContacts . x . _Just
+    SL.get >>= mapMOf (contacts _1) initContact 
+    SL.get >>= mapMOf (contacts _2) initContact 
+ where
+    initContact contact = do
+        -- Calucate radii from COM to contact
+        let ra = contact - a^.bPos
+            rb = contact - b^.bPos
+            rv = b^.bVel + pure (xross (pure $ b^.bAngVel) rb)
+            rv' = rv - a^.bVel - pure (xross (pure $ a^.bAngVel) ra)
+        when (norm rv' < norm (dt * gravity) + 0.0001) (mfE .= 0)
+        return contact
+
+-- Solve impulse and apply
+manifoldApplyImpulse :: Object -> Object -> Manifold -> Manifold
+manifoldApplyImpulse a b = SL.execState $ do
+    -- infinite mass correction
+    let (a',b') = if nearZero (a^.bInvMass + b^.bInvMass)
+            then (a & bVel .~ zero, b & bVel .~ zero)
+            else (a,b)
+    return ()
+
+-- Naive correction of positional penetration
+manifoldPositionalCorrection :: Manifold -> Manifold
+manifoldPositionalCorrection = undefined
+
+manifoldInfiniteMassCorrection :: Object -> Object -> (Object, Object)
+manifoldInfiniteMassCorrection a b = (a & bVel .~ (V2 0 0), b & bVel .~ (V2 0 0))
+
 -- scene
 
 mkScene :: Float -> Int -> Scene
@@ -318,23 +341,23 @@ mkScene dt iterations = Scene iterations dt [] []
 
 integrateForces :: Body -> Float -> Body
 integrateForces b@Body{..} dt = let
-    vel = (b_force ^* b_im + gravity) ^* (dt / 2)
-    angVel = b_torque * b_iI * dt / 2
-    in if b_im == 0
+    vel = (_bForce ^* _bInvMass + gravity) ^* (dt / 2)
+    angVel = _bTorque * _bInvInertia * dt / 2
+    in if _bInvMass == 0
         then b
-        else b { b_vel = b_vel + vel, b_angVel = b_angVel + angVel }
+        else b & (bVel +~ vel) . (bAngVel +~ angVel)
 
 integrateVelocity :: Body -> Float -> Body
 integrateVelocity b@Body{..} dt = let
-    pos = b_vel ^* dt
-    orient = b_angVel * dt
-    b' = b { b_pos = b_pos + pos, b_orient = b_orient + orient }
-    in if b_im == 0
+    pos = _bVel ^* dt
+    orient = _bAngVel * dt
+    b' = b & (bPos +~ pos) . (bOrient +~ orient)
+    in if _bInvMass == 0
         then b
         else integrateForces b' dt
 
 -- TODO
 sceneStep :: Scene -> Scene
 sceneStep s@Scene{..} = let
-    s' = s { s_contacts = [] }
+    s' = s & sContacts .~ []
     in s
