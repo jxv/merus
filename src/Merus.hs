@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances #-}
 module Merus where
 
 import Control.Applicative
@@ -5,203 +6,335 @@ import Control.Lens
 import Linear
 import Linear.Affine
 
-data Circle a = Circle {
-    _circlePos :: V2 a,
-    _circleRadius :: a
+data Circle = Circle {
+    _cPos :: V2 Float,
+    _cRadius :: Float
 } deriving (Show, Eq)
 
-makeLenses ''Circle
-
-data Bb a = Bb {
-    _bbMin :: V2 a,
-    _bbMax :: V2 a
+data Rect = Rect {
+    _rRadii :: V2 Float
 } deriving (Show, Eq)
 
-makeLenses ''Bb
+data Aabb = Aabb {
+    _aMin :: V2 Float,
+    _aMax :: V2 Float
+} deriving (Show, Eq)
 
-data Shape a
-    = CircleS (Circle a)
-    | BbS (Bb a)
+data Shape
+    = ShapeCircle Circle
+    | ShapeRect Rect
+    | ShapeAabb Aabb
     deriving (Show, Eq)
 
-data Manifold a = Manifold {
-    _mfNormal :: V2 a,
-    _mfPenetration :: a
+data Manifold = Manifold {
+    _mfNormal :: V2 Float,
+    _mfPenetration :: Float
 } deriving (Show, Eq)
 
-makeLenses ''Manifold
+data Body a = Body {
+    _bPos :: V2 Float,
+    _bVel :: V2 Float,
+    _bMass :: Float,
+    _bRestitution :: Float,
+    _bShape :: a
+}
 
-class HasPos (p :: * -> *) where
-    pos :: Floating a => Lens' (p a) (V2 a)
 
-class HasRadius (r :: * -> *) where
-    radius :: Floating a =>  Lens' (r a) a
+--
 
-class HasRadii (r :: * -> *) where
-    radii :: Floating a => Lens' (r a) (V2 a)
+makeClassy ''Circle
+makeClassy ''Rect
+makeClassy ''Aabb
+makeClassy ''Shape
+makeClassy ''Manifold
+makeClassy ''Body
 
-class HasDimens (d :: * -> *) where
-    dimens :: Floating a => Lens' (d a) (V2 a)
+--
 
-class Dir (d :: * -> *) where
-    _l :: (Functor f, Floating a) => (a -> f a) -> d a -> f (d a)
-    _r :: (Functor f, Floating a) => (a -> f a) -> d a -> f (d a)
-    _u :: (Functor f, Floating a) => (a -> f a) -> d a -> f (d a)
-    _d :: (Functor f, Floating a)  => (a -> f a) -> d a -> f (d a)
-    _lurd :: (Functor f, Floating a) => (V4 a -> f (V4 a)) -> d a -> f (d a)
+class HasPos a where
+    pos :: Lens' a (V2 Float)
+
+class HasRadius a where
+    radius :: Lens' a Float
+
+class HasRadii a where
+    radii :: Lens' a (V2 Float)
+
+class Dir a where
+    _l :: Lens' a Float
+    _r :: Lens' a Float
+    _u :: Lens' a Float
+    _d :: Lens' a Float
+    _lurd :: Lens' a (V4 Float)
     _lurd = lens (\d -> V4 (d^._l) (d^._u) (d^._r) (d^._d))
                  (\dir (V4 l u r d) -> dir & (_l .~ l) . (_u .~ u) . (_r .~ r) . (_d .~ d))
 
-class ToBb t where
-    toBb :: Floating a => t -> Bb a
+class ToAabb a where
+    toAabb :: a -> Aabb
+
+class ToShape a where
+    toShape :: a -> Shape
+
+--
+
+instance Functor Body where
+    fmap f b = b { _bShape = f (_bShape b) }
+
+instance HasCircle (Body Circle) where
+    circle = bShape
+
+instance HasRect (Body Rect) where
+    rect = bShape
+
+instance HasAabb (Body Aabb) where
+    aabb = bShape
+
+instance ToAabb (Body Circle) where
+    toAabb a = let r = pure (a^.cRadius) in Aabb (a^.bPos - r) (a^.bPos + r)
+
+instance ToAabb (Body Aabb) where
+    toAabb = _bShape
+
+instance ToAabb (Body Rect) where
+    toAabb a = Aabb (a^.bPos - a^.rRadii) (a^.bPos + a^.rRadii)
+
+instance Show a => Show (Body a) where
+    show Body{..} =
+        "Body {" ++
+        "_bPos = " ++ show _bPos ++
+        ", _bVel = " ++ show _bVel ++
+        ", _bMass = " ++ show _bMass ++
+        ", _bRestitution = " ++ show _bRestitution ++
+        ", _bShape = " ++ show _bShape ++
+        "}"
+
+instance Eq a => Eq (Body a) where
+    (==) a b =
+        _bPos a == _bPos b &&
+        _bVel a == _bVel b &&
+        _bMass a == _bMass b &&
+        _bRestitution a == _bRestitution b &&
+        _bShape a == _bShape b
+
+instance ToShape Shape where
+    toShape = id
+
+instance ToShape Rect where
+    toShape = ShapeRect
+
+instance ToShape Circle where
+    toShape = ShapeCircle
+
+--
 
 instance HasPos Circle where
-    pos = circlePos
+    pos = cPos
 
 instance HasRadius Circle where
-    radius = circleRadius
+    radius = cRadius
 
-instance HasPos Bb where
+instance HasPos Aabb where
     pos = lens getter setter
      where
-        getter a = a^.bbMin + a^.radii
-        setter a p = let r = a^.radii in Bb (p - r) (p + r)
+        getter a = a^.aMin + a^.radii
+        setter a p = let r = a^.radii in Aabb (p - r) (p + r)
 
-instance HasRadii Bb where
+instance HasRadii Aabb where
     radii = lens getter setter
      where
-        getter a = (a^.bbMax - a^.bbMin) / 2
-        setter a r = let p = a^.pos in Bb (p - r) (p + r)
+        getter a = (a^.aMax - a^.aMin) / 2
+        setter a r = let p = a^.pos in Aabb (p - r) (p + r)
 
-instance Dir Bb where
-    _l = bbMin . _x
-    _r = bbMax . _x
-    _u = bbMin . _y
-    _d = bbMax . _y
+instance Dir Aabb where
+    _l = aMin . _x
+    _r = aMax . _x
+    _u = aMin . _y
+    _d = aMax . _y
 
 instance HasPos Shape where
     pos = lens getter setter
      where
-        getter (CircleS c) = c^.pos
-        getter (BbS a) = a^.pos
-        setter (CircleS c) p = CircleS (c & pos .~ p)
-        setter (BbS a) p = BbS (a & pos .~ p)
+        getter (ShapeCircle c) = c^.pos
+        getter (ShapeAabb a) = a^.pos
+        setter (ShapeCircle c) p = ShapeCircle (c & pos .~ p)
+        setter (ShapeAabb a) p = ShapeAabb (a & pos .~ p)
 
-isIntersect :: Ord a => V4 a -> V4 a -> Bool
+--
+
+isIntersect :: V4 Float -> V4 Float -> Bool
 isIntersect (V4 al au ar ad) (V4 bl bu br bd) = ar >= bl && al <= br && ad >= bu && au <= bd
 {-# INLINE isIntersect #-}
 
-isInside :: Ord a => V2 a -> V4 a -> Bool
+isInside :: V2 Float -> V4 Float -> Bool
 isInside (V2 x y) = isIntersect (V4 x y x y)
 {-# INLINE isInside #-}
 
-bbVsBb :: (Floating a, Ord a) => Bb a -> Bb a -> Maybe (Manifold a)
-bbVsBb a b = let
+{-
+aabbVsAabb :: Aabb -> Aabb -> Maybe Manifold
+aabbVsAabb a b = let
     n = b^.pos - a^.pos
     xOverlap = a^.radii^._x + b^.radii^._x - abs (n^._x)
     yOverlap = a^.radii^._y + b^.radii^._y - abs (n^._y)
     in if xOverlap <= 0
         then Nothing
-        else Just $ if yOverlap > 0
-                then Manifold (if n^._x < 0 then V2 (-1) 0 else V2 0 0) xOverlap 
-                else Manifold (if n^._y < 0 then V2 0 (-1) else V2 0 1) yOverlap
-{-# INLINE bbVsBb #-}
+        else Just $
+            if yOverlap > 0
+            then Manifold (if n^._x < 0 then V2 (-1) 0 else zero) xOverlap 
+            else Manifold (if n^._y < 0 then V2 0 (-1) else V2 0 1) yOverlap
+{-# INLINE aabbVsAabb #-}
 
-testBbVsBb :: (Floating a, Ord a) => Bb a -> Bb a -> Bool
-testBbVsBb a b = (a^._lurd) `isIntersect` (b^._lurd)
-{-# INLINE testBbVsBb #-}
+-}
 
-testCircleVsCircle :: (Floating a, Ord a) => Circle a -> Circle a -> Bool
+rectToRect :: Body Rect -> Body Rect -> Maybe Manifold
+rectToRect a b = let
+    n = b^.bPos - a^.bPos
+    xOverlap = a^.rRadii^._x + b^.rRadii^._x - abs (n^._x)
+    yOverlap = a^.rRadii^._y + b^.rRadii^._y - abs (n^._y)
+    in if xOverlap <= 0
+        then Nothing
+        else Just $
+            if yOverlap > 0
+            then Manifold (if n^._x < 0 then V2 (-1) 0 else zero) xOverlap 
+            else Manifold (if n^._y < 0 then V2 0 (-1) else V2 0 1) yOverlap
+{-# INLINE rectToRect #-}
+
+{-
+testAabbVsAabb :: Aabb -> Aabb -> Bool
+testAabbVsAabb a b = (a^._lurd) `isIntersect` (b^._lurd)
+{-# INLINE testAabbVsAabb #-}
+
+testCircleVsCircle :: Circle -> Circle -> Bool
 testCircleVsCircle a b = let
     n = a^.pos - b^.pos
     rad2 = (a^.radius + b^.radius) ^ (2 :: Int)
     in dot n n < rad2
 {-# INLINE testCircleVsCircle #-}
 
-circleVsCircle :: (Floating a, Ord a) => Circle a -> Circle a -> Maybe (Manifold a)
+
+circleVsCircle :: Circle -> Circle -> Maybe Manifold
 circleVsCircle a b = let
     n = a^.pos - b^.pos
     d = norm n
     rad2 = (a^.radius + b^.radius) ^ (2 :: Int)
     in if dot n n < rad2
         then Nothing
-        else Just $ if d /= 0
+        else Just $
+            if d /= 0
             then Manifold (V2 (n^._x / d) (n^._y / d)) (rad2 - d)
             else Manifold (V2 1 0) (a^.radius)
 {-# INLINE circleVsCircle #-}
+-}
+
+circleToCircle :: Body Circle -> Body Circle -> Maybe Manifold
+circleToCircle a b = let
+    n = a^.bPos - b^.bPos
+    d = norm n
+    rad2 = (a^.cRadius + b^.cRadius) ^ (2 :: Int)
+    in if dot n n < rad2
+        then Nothing
+        else Just $
+            if d /= 0
+            then Manifold (V2 (n^._x / d) (n^._y / d)) (rad2 - d)
+            else Manifold (V2 1 0) (a^.cRadius)
+{-# INLINE circleToCircle #-}
 
 clamp :: Ord a => a -> a -> a -> a
 clamp low high = max low . min high
 {-# INLINE clamp #-}
 
-testBbVsCircle :: (Floating a, Ord a) => Bb a -> Circle a -> Bool
-testBbVsCircle a b = let
+{-
+testAabbVsCircle :: Aabb -> Circle -> Bool
+testAabbVsCircle a b = let
     inside = (b^.pos) `isInside` (a^._lurd)
     n = b^.pos - a^.pos
-    V2 xRadius yRadius = a^.radii
-    closest = V2 (clamp (-xRadius) xRadius (n^._x)) (clamp (-yRadius) yRadius (n^._y))
+    closest = V2 (clamp (-a^.radii^._x) (a^.radii^._x) (n^._x))
+                 (clamp (-a^.radii^._y) (a^.radii^._y) (n^._y))
     normal = n - closest
     d = dot normal normal
     rad2 = (b^.radius) ^ 2
     in inside || d <= rad2
-{-# INLINE testBbVsCircle #-}
+{-# INLINE testAabbVsCircle #-}
 
-bbVsCircle :: (Floating a, Ord a) => Bb a -> Circle a -> Maybe (Manifold a)
-bbVsCircle a b = let
+aabbVsCircle :: Aabb -> Circle -> Maybe Manifold
+aabbVsCircle a b = let
     inside = (b^.pos) `isInside` (a^._lurd)
     n = b^.pos - a^.pos
     V2 xRadius yRadius = a^.radii
     closest = V2 (clamp (-xRadius) xRadius (n^._x)) (clamp (-yRadius) yRadius (n^._y))
     closest' =
         if n == closest
-            then if abs (n^._x) > abs (n^._y)
-                    then closest & _x .~ (if closest^._x > 0 then xRadius else (-xRadius))
-                    else closest & _y .~ (if closest^._y > 0 then yRadius else (-yRadius))
-            else closest
+        then if abs (n^._x) > abs (n^._y)
+            then closest & _x .~ (if closest^._x > 0 then xRadius else (-xRadius))
+            else closest & _y .~ (if closest^._y > 0 then yRadius else (-yRadius))
+        else closest
     normal = n - closest'
     d = dot normal normal
     r = b^.radius
     in if not inside && d > r^2
         then Nothing
         else Just $ Manifold (if inside then -n else n) (r + d)
-{-# INLINE bbVsCircle #-}
+{-# INLINE aabbVsCircle #-}
+-}
 
-testShapeVsShape :: (Floating a, Ord a) => Shape a -> Shape a -> Bool
-testShapeVsShape (BbS a) (BbS b) = testBbVsBb a b
-testShapeVsShape (BbS a) (CircleS c) = testBbVsCircle a c
-testShapeVsShape (CircleS c) (CircleS d) = testCircleVsCircle c d
+rectToCircle :: Body Rect -> Body Circle -> Maybe Manifold
+rectToCircle a b = let
+    inside = (b^.bPos) `isInside` ((toAabb a)^._lurd)
+    n = b^.bPos - a^.bPos
+    closest = V2 (clamp (-a^.rRadii^._x) (a^.rRadii^._x) (n^._x))
+                 (clamp (-a^.rRadii^._y) (a^.rRadii^._y) (n^._y))
+    closest' =
+        if n == closest
+        then if abs (n^._x) > abs (n^._y)
+            then closest & _x .~ (if closest^._x > 0 then (a^.rRadii^._x) else (-a^.rRadii^._x))
+            else closest & _y .~ (if closest^._y > 0 then (a^.rRadii^._y) else (-a^.rRadii^._y))
+        else closest
+    normal = n - closest'
+    d = dot normal normal
+    r = b^.cRadius
+    in if not inside && d > r ^ 2
+        then Nothing
+        else Just $ Manifold (if inside then -n else n) (r + d)
+{-# INLINE rectToCircle #-}
+
+{-
+testShapeVsShape :: Shape -> Shape -> Bool
+testShapeVsShape (ShapeAabb a) (ShapeAabb b) = testAabbVsAabb a b
+testShapeVsShape (ShapeAabb a) (ShapeCircle c) = testAabbVsCircle a c
+testShapeVsShape (ShapeCircle c) (ShapeCircle d) = testCircleVsCircle c d
 testShapeVsShape s t = testShapeVsShape t s
 
-shapeVsShape :: (Floating a, Ord a) => Shape a -> Shape a -> Maybe (Manifold a)
-shapeVsShape (BbS a) (BbS b) = bbVsBb a b
-shapeVsShape (BbS a) (CircleS c) = bbVsCircle a c
-shapeVsShape (CircleS c) (CircleS d) = circleVsCircle c d
+shapeVsShape :: Shape -> Shape -> Maybe Manifold
+shapeVsShape (ShapeAabb a) (ShapeAabb b) = aabbVsAabb a b
+shapeVsShape (ShapeAabb a) (ShapeCircle c) = aabbVsCircle a c
+shapeVsShape (ShapeCircle c) (ShapeCircle d) = circleVsCircle c d
 shapeVsShape s t = shapeVsShape t s
+-}
 
-data Body a = Body {
-    bdVel :: V2 a,
-    bdMass :: a,
-    bdRestitution :: a
-} deriving (Show, Eq)
+bodyToBody :: (ToShape a, ToShape b) => Body a -> Body b -> Maybe Manifold
+bodyToBody a b = b2b (fmap toShape a) (fmap toShape b)
+ where
+    b2b a@Body{_bShape = ShapeRect ar}   b@Body{_bShape = ShapeRect br}   = rectToRect (ar <$ a) (br <$ b)
+    b2b a@Body{_bShape = ShapeRect ar}   b@Body{_bShape = ShapeCircle bc} = rectToCircle (ar <$ a) (bc <$ b)
+    b2b a@Body{_bShape = ShapeCircle ac} b@Body{_bShape = ShapeCircle bc} = circleToCircle (ac <$ a) (bc <$ b)
+    b2b a                                b                                = b2b b a
 
-resolveCollision :: (Floating a, Ord a) => Manifold a -> Body a -> Body a -> (Body a, Body a)
+resolveCollision :: Manifold -> Body a -> Body a -> (Body a, Body a)
 resolveCollision m a b = let
-    rv = (bdVel a) - (bdVel b)
+    rv = (_bVel a) - (_bVel b)
     velTanNorm = dot rv (_mfNormal m)
-    e = min (bdRestitution a) (bdRestitution b)
+    e = min (_bRestitution a) (_bRestitution b)
     j = -(1 + e) * velTanNorm
-    j' = j / (recip (bdMass a) + recip (bdMass b))
+    j' = j / (recip (_bMass a) + recip (_bMass b))
     impulse = pure j' * (_mfNormal m)
-    a' = a { bdVel = bdVel a - impulse / pure (bdMass a) }
-    b' = b { bdVel = bdVel b + impulse / pure (bdMass b) }
+    a' = a & bVel -~ (impulse / pure (a^.bMass))
+    b' = b & bVel -~ (impulse / pure (a^.bMass))
     in if velTanNorm > 0 then (a,b) else (a',b')
 
-square :: Floating a => V2 a -> a -> Shape a
-square p s = BbS $ Bb p (p + pure s)
+mkSquare :: V2 Float -> Float -> Body Shape
+mkSquare p s = fmap toShape $ Body p zero 0 0 (Rect $ pure s)
 
-rect :: Floating a => V2 a -> V2 a -> Shape a
-rect p d = BbS $ Bb p (p + d)
+mkRect :: V2 Float -> V2 Float -> Body Shape
+mkRect p d = fmap toShape $ Body p zero 0 0 (Rect d)
 
-circle :: Floating a => V2 a -> a -> Shape a
-circle p r = CircleS $ Circle p r
-
+mkCircle :: V2 Float -> Float -> Body Shape
+mkCircle p r = fmap toShape $ Body p zero 0 0 (Circle p r)
