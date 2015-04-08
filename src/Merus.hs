@@ -7,7 +7,6 @@ import Linear
 import Linear.Affine
 
 data Circle = Circle {
-    _cPos :: V2 Float,
     _cRadius :: Float
 } deriving (Show, Eq)
 
@@ -23,7 +22,6 @@ data Aabb = Aabb {
 data Shape
     = ShapeCircle Circle
     | ShapeRect Rect
-    | ShapeAabb Aabb
     deriving (Show, Eq)
 
 data Manifold = Manifold {
@@ -50,15 +48,6 @@ makeClassy ''Manifold
 makeClassy ''Body
 
 --
-
-class HasPos a where
-    pos :: Lens' a (V2 Float)
-
-class HasRadius a where
-    radius :: Lens' a Float
-
-class HasRadii a where
-    radii :: Lens' a (V2 Float)
 
 class Dir a where
     _l :: Lens' a Float
@@ -125,41 +114,16 @@ instance ToShape Rect where
 instance ToShape Circle where
     toShape = ShapeCircle
 
---
-
-instance HasPos Circle where
-    pos = cPos
-
-instance HasRadius Circle where
-    radius = cRadius
-
-instance HasPos Aabb where
-    pos = lens getter setter
-     where
-        getter a = a^.aMin + a^.radii
-        setter a p = let r = a^.radii in Aabb (p - r) (p + r)
-
-instance HasRadii Aabb where
-    radii = lens getter setter
-     where
-        getter a = (a^.aMax - a^.aMin) / 2
-        setter a r = let p = a^.pos in Aabb (p - r) (p + r)
-
 instance Dir Aabb where
     _l = aMin . _x
     _r = aMax . _x
     _u = aMin . _y
     _d = aMax . _y
 
-instance HasPos Shape where
-    pos = lens getter setter
-     where
-        getter (ShapeCircle c) = c^.pos
-        getter (ShapeAabb a) = a^.pos
-        setter (ShapeCircle c) p = ShapeCircle (c & pos .~ p)
-        setter (ShapeAabb a) p = ShapeAabb (a & pos .~ p)
-
 --
+
+aabbPos :: Aabb -> V2 Float
+aabbPos a = a^.aMin + ((a^.aMax - a^.aMin) / 2)
 
 isIntersect :: V4 Float -> V4 Float -> Bool
 isIntersect (V4 al au ar ad) (V4 bl bu br bd) = ar >= bl && al <= br && ad >= bu && au <= bd
@@ -337,4 +301,4 @@ mkRect :: V2 Float -> V2 Float -> Body Shape
 mkRect p d = fmap toShape $ Body p zero 0 0 (Rect d)
 
 mkCircle :: V2 Float -> Float -> Body Shape
-mkCircle p r = fmap toShape $ Body p zero 0 0 (Circle p r)
+mkCircle p r = fmap toShape $ Body p zero 0 0 (Circle r)
