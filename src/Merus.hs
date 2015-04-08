@@ -133,22 +133,6 @@ isInside :: V2 Float -> V4 Float -> Bool
 isInside (V2 x y) = isIntersect (V4 x y x y)
 {-# INLINE isInside #-}
 
-{-
-aabbVsAabb :: Aabb -> Aabb -> Maybe Manifold
-aabbVsAabb a b = let
-    n = b^.pos - a^.pos
-    xOverlap = a^.radii^._x + b^.radii^._x - abs (n^._x)
-    yOverlap = a^.radii^._y + b^.radii^._y - abs (n^._y)
-    in if xOverlap <= 0
-        then Nothing
-        else Just $
-            if yOverlap > 0
-            then Manifold (if n^._x < 0 then V2 (-1) 0 else zero) xOverlap 
-            else Manifold (if n^._y < 0 then V2 0 (-1) else V2 0 1) yOverlap
-{-# INLINE aabbVsAabb #-}
-
--}
-
 rectToRect :: Body Rect -> Body Rect -> Maybe Manifold
 rectToRect a b = let
     n = b^.bPos - a^.bPos
@@ -161,33 +145,6 @@ rectToRect a b = let
             then Manifold (if n^._x < 0 then V2 (-1) 0 else zero) xOverlap 
             else Manifold (if n^._y < 0 then V2 0 (-1) else V2 0 1) yOverlap
 {-# INLINE rectToRect #-}
-
-{-
-testAabbVsAabb :: Aabb -> Aabb -> Bool
-testAabbVsAabb a b = (a^._lurd) `isIntersect` (b^._lurd)
-{-# INLINE testAabbVsAabb #-}
-
-testCircleVsCircle :: Circle -> Circle -> Bool
-testCircleVsCircle a b = let
-    n = a^.pos - b^.pos
-    rad2 = (a^.radius + b^.radius) ^ (2 :: Int)
-    in dot n n < rad2
-{-# INLINE testCircleVsCircle #-}
-
-
-circleVsCircle :: Circle -> Circle -> Maybe Manifold
-circleVsCircle a b = let
-    n = a^.pos - b^.pos
-    d = norm n
-    rad2 = (a^.radius + b^.radius) ^ (2 :: Int)
-    in if dot n n < rad2
-        then Nothing
-        else Just $
-            if d /= 0
-            then Manifold (V2 (n^._x / d) (n^._y / d)) (rad2 - d)
-            else Manifold (V2 1 0) (a^.radius)
-{-# INLINE circleVsCircle #-}
--}
 
 circleToCircle :: Body Circle -> Body Circle -> Maybe Manifold
 circleToCircle a b = let
@@ -205,40 +162,6 @@ circleToCircle a b = let
 clamp :: Ord a => a -> a -> a -> a
 clamp low high = max low . min high
 {-# INLINE clamp #-}
-
-{-
-testAabbVsCircle :: Aabb -> Circle -> Bool
-testAabbVsCircle a b = let
-    inside = (b^.pos) `isInside` (a^._lurd)
-    n = b^.pos - a^.pos
-    closest = V2 (clamp (-a^.radii^._x) (a^.radii^._x) (n^._x))
-                 (clamp (-a^.radii^._y) (a^.radii^._y) (n^._y))
-    normal = n - closest
-    d = dot normal normal
-    rad2 = (b^.radius) ^ 2
-    in inside || d <= rad2
-{-# INLINE testAabbVsCircle #-}
-
-aabbVsCircle :: Aabb -> Circle -> Maybe Manifold
-aabbVsCircle a b = let
-    inside = (b^.pos) `isInside` (a^._lurd)
-    n = b^.pos - a^.pos
-    V2 xRadius yRadius = a^.radii
-    closest = V2 (clamp (-xRadius) xRadius (n^._x)) (clamp (-yRadius) yRadius (n^._y))
-    closest' =
-        if n == closest
-        then if abs (n^._x) > abs (n^._y)
-            then closest & _x .~ (if closest^._x > 0 then xRadius else (-xRadius))
-            else closest & _y .~ (if closest^._y > 0 then yRadius else (-yRadius))
-        else closest
-    normal = n - closest'
-    d = dot normal normal
-    r = b^.radius
-    in if not inside && d > r^2
-        then Nothing
-        else Just $ Manifold (if inside then -n else n) (r + d)
-{-# INLINE aabbVsCircle #-}
--}
 
 rectToCircle :: Body Rect -> Body Circle -> Maybe Manifold
 rectToCircle a b = let
@@ -259,20 +182,6 @@ rectToCircle a b = let
         then Nothing
         else Just $ Manifold (if inside then -n else n) (r + d)
 {-# INLINE rectToCircle #-}
-
-{-
-testShapeVsShape :: Shape -> Shape -> Bool
-testShapeVsShape (ShapeAabb a) (ShapeAabb b) = testAabbVsAabb a b
-testShapeVsShape (ShapeAabb a) (ShapeCircle c) = testAabbVsCircle a c
-testShapeVsShape (ShapeCircle c) (ShapeCircle d) = testCircleVsCircle c d
-testShapeVsShape s t = testShapeVsShape t s
-
-shapeVsShape :: Shape -> Shape -> Maybe Manifold
-shapeVsShape (ShapeAabb a) (ShapeAabb b) = aabbVsAabb a b
-shapeVsShape (ShapeAabb a) (ShapeCircle c) = aabbVsCircle a c
-shapeVsShape (ShapeCircle c) (ShapeCircle d) = circleVsCircle c d
-shapeVsShape s t = shapeVsShape t s
--}
 
 bodyToBody :: (ToShape a, ToShape b) => Body a -> Body b -> Maybe Manifold
 bodyToBody a b = b2b (fmap toShape a) (fmap toShape b)
