@@ -19,7 +19,15 @@ flag demo
 library
     exposed-modules:
         Merus
-    -- other-modules: 
+        Merus.Types
+        Merus.Aabb
+        Merus.Body
+        Merus.Collision
+        Merus.Manifold
+        Merus.Shape
+        Merus.World
+    other-modules: 
+        Merus.Math
     default-extensions:
         RecordWildCards
         TemplateHaskell
@@ -27,8 +35,10 @@ library
         Rank2Types
     build-depends:
         base,
+        vector,
         lens,
-        linear
+        linear,
+        mtl
     hs-source-dirs: src
     default-language: Haskell2010
 
