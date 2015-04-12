@@ -33,6 +33,7 @@ library
         TemplateHaskell
         KindSignatures
         Rank2Types
+        MultiWayIf
     build-depends:
         base,
         vector,

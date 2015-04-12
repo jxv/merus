@@ -17,9 +17,16 @@ data Rect = Rect {
     _rRadii :: V2 Float
 } deriving (Show, Eq)
 
+data Poly = Poly {
+    _pU :: M22 Float,
+    _pVertices :: V.Vector (V2 Float),
+    _pNormals :: V.Vector (V2 Float)
+} deriving (Show, Eq)
+
 data Shape
     = ShapeCircle Circle
-    | ShapeRect Rect
+--    | ShapeRect Rect
+    | ShapePoly Poly
     deriving (Show, Eq)
 
 data Aabb = Aabb {
@@ -32,8 +39,7 @@ data Manifold = Manifold {
     _mfPenetration :: Float,
     _mfA :: Int, -- body A's index
     _mfB :: Int, -- body B's index
-    --_mfContacts :: [V2 Float], -- points of collision contacts
-    _mfContacts :: (Maybe (V2 Float), Maybe (V2 Float)),
+    _mfContacts :: (Maybe (V2 Float), Maybe (V2 Float)), -- points of collision contacts
     _mfE :: Float, -- mixed restitution
     _mfDf :: Float, -- mixed dynamic friction
     _mfSf :: Float -- mixed static friction
@@ -72,6 +78,7 @@ data World = World {
 --
 
 makeClassy ''Circle
+makeClassy ''Poly
 makeClassy ''Rect
 makeClassy ''Aabb
 makeClassy ''Shape
@@ -131,8 +138,8 @@ instance HasCircle (Body Circle) where
 instance HasRect (Body Rect) where
     rect = bShape
 
-instance HasAabb (Body Aabb) where
-    aabb = bShape
+instance HasPoly (Body Poly) where
+    poly = bShape
 
 instance ToAabb (Body Circle) where
     toAabb a = let r = pure (a^.cRadius) in Aabb (a^.bPos - r) (a^.bPos + r)
@@ -163,11 +170,14 @@ instance Eq a => Eq (Body a) where
 instance ToShape Shape where
     toShape = id
 
-instance ToShape Rect where
-    toShape = ShapeRect
+--instance ToShape Rect where
+--    toShape = ShapeRect
 
 instance ToShape Circle where
     toShape = ShapeCircle
+
+instance ToShape Poly where
+    toShape = ShapePoly
 
 instance Dir Aabb where
     _l = aMin . _x

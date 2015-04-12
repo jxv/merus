@@ -220,7 +220,7 @@ contactsByBody bodies = let
     in thinking 
 
 modifyBody :: (Body Shape, [(Body Shape, Manifold)]) -> Body Shape
-modifyBody (b@Body{..}, elements) = if _bType == BodyStatic then b else F.foldl' const b elements
+modifyBody (b@Body{..}, elements) = if _bType == Static then b else F.foldl' const b elements
 
 {-
 applyCollisionImpulse :: Body -> (Body, Maybe Contact) -> Body
