@@ -1,7 +1,7 @@
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances #-}
 module Merus.Types where 
 
-import qualified Data.Vector as V
+import qualified Data.Vector.Storable as V
 import Control.Applicative
 import Control.Lens
 import Control.Lens.Indexed
@@ -25,7 +25,6 @@ data Poly = Poly {
 
 data Shape
     = ShapeCircle Circle
---    | ShapeRect Rect
     | ShapePoly Poly
     deriving (Show, Eq)
 
@@ -169,9 +168,6 @@ instance Eq a => Eq (Body a) where
 
 instance ToShape Shape where
     toShape = id
-
---instance ToShape Rect where
---    toShape = ShapeRect
 
 instance ToShape Circle where
     toShape = ShapeCircle

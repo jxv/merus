@@ -1,6 +1,6 @@
 module Merus.Shape where
 
-import qualified Data.Vector as V
+import qualified Data.Vector.Storable as V
 import qualified Data.Foldable as F
 import Control.Lens
 import Linear
@@ -31,7 +31,7 @@ computePolygonMass density a = let
         in (area', i', c')
     (area, i, c) = F.foldl' iter (0, 0, zero) [0..V.length (a^.pVertices) - 1]
     c' = c ^/ area
-    verts = fmap (subtract c') (a^.pVertices)
+    verts = V.map (subtract c') (a^.pVertices)
     --
     m = density * area
     i' = density * i 
@@ -52,3 +52,36 @@ polySetBox hw hh p = let
             V2 (-1) 0
         ]
     in p & (pVertices .~ verts) . (pNormals .~ norms)
+
+polyEmpty :: Poly
+polyEmpty = Poly identity V.empty V.empty
+
+mkBody :: a -> Body a
+mkBody = Body Dynamic nil nil nil nil nil nil nil nil nil nil nil nil nil
+ where
+    nil :: Num a => a
+    nil = fromInteger 0
+
+mkSquare' :: Float -> Body Poly
+mkSquare' s = mkBody $ polySetBox s s polyEmpty
+
+mkRect' :: V2 Float -> Body Poly
+mkRect' (V2 x y) = mkBody $ polySetBox x y polyEmpty
+
+mkPoly' :: V.Vector (V2 Float) -> V.Vector (V2 Float) -> Body Poly
+mkPoly' verts norms = mkBody $ polyEmpty & (pVertices .~ verts) . (pNormals .~ norms)
+
+mkCircle' :: Float -> Body Circle
+mkCircle' = mkBody . Circle
+
+mkRect :: V2 Float -> Body Shape
+mkRect = fmap toShape . mkRect'
+
+mkSquare :: Float -> Body Shape
+mkSquare = fmap toShape . mkSquare'
+
+mkPoly :: V.Vector (V2 Float) -> V.Vector (V2 Float) -> Body Shape
+mkPoly verts norms = fmap toShape $ mkPoly' verts norms
+
+mkCircle :: Float -> Body Shape
+mkCircle = fmap toShape . mkCircle'

@@ -79,3 +79,6 @@ manifoldApplyImpulse a b mf@Manifold{..} = let
             else (a'',b'')
     hasContact x = if (isJust . x) _mfContacts then 1 else 0
     count = hasContact fst + hasContact snd
+
+dualManifold :: Manifold -> Manifold
+dualManifold mf = mf & mfNormal %~ negate

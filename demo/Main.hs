@@ -4,7 +4,7 @@ import qualified Data.Foldable as F
 import qualified Data.Vector.Storable as V
 import qualified Data.Map as M
 import qualified Data.List as L
-import SDL as SDL
+import SDL
 import Control.Applicative
 import Control.Monad
 import Control.Monad.IO.Class
@@ -40,9 +40,9 @@ data Input = Input {
     inputDown :: Bool
 } deriving (Show, Eq)
 
-data ColorRect = ColorRect {
-    crRect :: Rectangle Float,
-    crColor :: V4 Word8
+data ColorPoly = ColorPoly {
+    cpVertices :: V.Vector (Point V2 CInt),
+    cpColor :: V4 Word8
 } deriving (Show)
 
 data ColorCircle = ColorCircle {
@@ -54,7 +54,7 @@ data ColorCircle = ColorCircle {
 } deriving (Show)
 
 data Graphic
-    = GraphicRect ColorRect
+    = GraphicPoly ColorPoly
     | GraphicCircle ColorCircle
     deriving (Show)
 
@@ -77,8 +77,8 @@ pollEvents = do
         Nothing -> return []
         Just event -> return (event:) `ap` pollEvents
 
-rectGraphic :: V2 Float -> V2 Float -> V4 Word8 -> ColorRect
-rectGraphic p dim color = ColorRect (Rectangle (P p) dim) color
+polyGraphic :: V.Vector (V2 Float) -> V4 Word8 -> ColorPoly
+polyGraphic verts color = ColorPoly (V.map (P . fmap round) $ verts) color
 
 circleGraphic :: V2 Float -> Float -> Int -> V4 Word8 -> ColorCircle
 circleGraphic center radius segs color = let
@@ -92,27 +92,27 @@ circleGraphic center radius segs color = let
 toGraphic :: Body Shape -> V4 Word8 -> Graphic
 toGraphic a = case _bShape a of
     ShapeCircle s -> GraphicCircle . toColorCircle (s <$ a)
-    ShapeRect s -> GraphicRect . toColorRect (s <$ a)
+    ShapePoly s -> GraphicPoly . toColorPoly (s <$ a)
 
-toColorRect :: Body Rect -> V4 Word8 -> ColorRect
-toColorRect a = let b = toAabb a in rectGraphic (b^.aMin) (b^.aMax - b^.aMin) 
+toColorPoly :: Body Poly -> V4 Word8 -> ColorPoly
+toColorPoly a c = polyGraphic (V.map (+ a^.bPos^._xy) (a^.pVertices)) c
 
 toColorCircle :: Body Circle -> V4 Word8 -> ColorCircle
-toColorCircle a = circleGraphic (a^.bPos) (a^.cRadius) 200
+toColorCircle a = circleGraphic (a^.bPos) (a^.cRadius) 30
 
 renderGraphic :: Renderer -> Graphic -> IO ()
 renderGraphic ren (GraphicCircle c) = renderColorCircle ren c
-renderGraphic ren (GraphicRect r) = renderColorRect ren r
+renderGraphic ren (GraphicPoly p) = renderColorPoly ren p
 
 renderColorCircle :: Renderer -> ColorCircle -> IO ()
 renderColorCircle renderer ColorCircle{..} = do
     setRenderDrawColor renderer ccColor
     renderDrawLines renderer ccPoints
 
-renderColorRect :: Renderer -> ColorRect -> IO ()
-renderColorRect renderer ColorRect{..} = do
-    setRenderDrawColor renderer crColor
-    renderDrawRect renderer (fmap round crRect)
+renderColorPoly :: Renderer -> ColorPoly -> IO ()
+renderColorPoly ren ColorPoly{..} = do
+    setRenderDrawColor ren cpColor
+    renderDrawLines ren cpVertices
 
 readInput :: [EventPayload] -> Input -> Input
 readInput [] input = input
@@ -168,72 +168,11 @@ delayTime goal start end = if frame >= goal then 0 else goal - frame
 makeDemoSteps :: Demo -> Demo
 makeDemoSteps d = iterate stepDemo d !! demoSteps d
 
-{-
-makeLittleStep :: FloatType -> World -> World
-makeLittleStep ts world = let
-    bs :: [Body]
-    bs = bodies world
-    contactingPairs = contacts
-    contactsWithBody :: [(Body, [(Body, Maybe Contact)])]
-    contactsWithBody = [
-            (bs !! i, [
-                    (bs !! j, mbC) 
-                    | (i', j, mbC) <- contactingPairs
-                    , i' == i
-                ])
-            | i <- [0..length bs - 1]
-        ]
-    modifyBody :: (Body, [(Body, Maybe Contact)]) -> Body
-    modifyBody (b, contacts) =
-        if isStatic b
-        then b
-        else foldl applyCollisionImpulse b contacts
-    modifiedBodies :: [Body]
-    modifiedBodies = map modifyBody contactsWithBody
-    in world {
-            bodies = [integrate (config world) ts b | b <- modifiedBodies]
-        }
--}
-
 stepDemo :: Demo -> Demo
 stepDemo d@Demo{..} = let
     dt = demoDeltaTime / fromIntegral demoSteps
     bodies = map (integrateVelocity dt demoGravity) demoBodies
     in d { demoBodies = bodies }
-
-contacts :: [Body Shape] -> [(Int, Int, Manifold)]
-contacts bodies = concat $ [
-        let bi = bodies !! i
-            bj = bodies !! j
-            mmanifold = bodyToBody bi bj
-        in fromMaybe [] $ fmap (\mf -> [(i, j, mf), (j, i, dualManifold mf)]) mmanifold
-        | i <- [0..bodiesLen - 1]
-        , j <- [(i+1)..bodiesLen - 1]
-    ]
- where bodiesLen = length bodies
-
-contactsByBody :: [Body Shape] -> [(Body Shape, [(Body Shape, Manifold)])]
-contactsByBody bodies = let
-    mood :: [[(Int, (Int, Manifold))]]
-    mood = L.groupBy (\a b -> a^._1 == b^._1) . map (\(a,b,c) -> (a,(b,c))) $ contacts bodies
-    thinking = flip map mood $ \list@((i,_):_) -> (bodies !! i, map (first (bodies !!)) $ map snd list)
-    in thinking 
-
-modifyBody :: (Body Shape, [(Body Shape, Manifold)]) -> Body Shape
-modifyBody (b@Body{..}, elements) = if _bType == Static then b else F.foldl' const b elements
-
-{-
-applyCollisionImpulse :: Body -> (Body, Maybe Contact) -> Body
-applyCollisionImpulse b1 (_, Nothing) = b1
-applyCollisionImpulse b1 (b2, Just contact)
-    | isStatic b1 = b1
-    | isStatic b2 = applyCollisionImpulse b1 (getPhantomBody b2, Just contact)
-    | otherwise = let
-    solution = uncurry gaussSolve (collisionLinearSystem b1 b2 contact)
-    v = Vec (solution !! 0) (solution !! 1) (solution !! 2) 
-    w = Vec (solution !! 6) (solution !! 7) (solution !! 8) 
-    in setAngularVelocity w $ setLinearVelocity v b1
--}
 
 main :: IO ()
 main = do
@@ -251,11 +190,11 @@ main = do
                 demoDeltaTime = 1 / 60,
                 demoSteps = 10,
                 demoRenderer = renderer,
-                demoGravity = V2 0 9.8,
+                demoGravity = zero, -- V2 0 9.8,
                 demoBodies = [
                     mkCircle 50 & attr . (bPos .~ V2 100 100),
                     mkSquare 10 & attr . (bPos .~ V2 300 350),
-                    mkRect (V2 300 10) & attr . (bPos .~ V2 350 400)
+                    mkRect (V2 300 10) & attr . (bPos .~ V2 175 200)
                 ],
                 demoManifold = replicate (length (demoBodies demo) - 1) Nothing
             }

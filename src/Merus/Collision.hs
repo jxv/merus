@@ -1,6 +1,6 @@
 module Merus.Collision where
 
-import qualified Data.Vector as V
+import qualified Data.Vector.Storable as V
 import qualified Data.Foldable as F
 import Control.Applicative
 import Control.Monad
@@ -135,6 +135,10 @@ circleToCircle a b = let
             else mkManifold (V2 1 0) (a^.cRadius)
 -}
 
+
+ifoldlM' f z0 xs = V.ifoldr f' return xs z0
+  where f' i x k z = f i z x >>= k
+
 circleToPoly :: Body Circle -> Body Poly -> Maybe Manifold
 circleToPoly a b = do
     -- Transform circle center to polygon model space
@@ -148,7 +152,7 @@ circleToPoly a b = do
             in if s > a^.cRadius
                 then Nothing
                 else Just $ if s' > s then (s',i) else (s,fn)
-    (separation, faceNormal) <- ifoldlM findEdgeWithMinPen (-1/0, 0) (b^.pVertices)
+    (separation, faceNormal) <- ifoldlM' findEdgeWithMinPen (-1/0, 0) (b^.pVertices)
     -- Grab face's vertices
     let v1, v2 :: V2 Float
         v1 = (b^.pVertices) V.! faceNormal
@@ -292,3 +296,30 @@ bodyToBody a b = b2b (fmap toShape a) (fmap toShape b)
     b2b a b = b2b b a
 --    b2b a@Body{_bShape = ShapeRect ar} b@Body{_bShape = ShapeRect br} = rectToRect (ar <$ a) (br <$ b)
 --    b2b a@Body{_bShape = ShapeRect ar} b@Body{_bShape = ShapeCircle bc} = rectToCircle (ar <$ a) (bc <$ b)
+
+resolveCollision :: Manifold -> Body a -> Body b -> (Body a, Body b)
+resolveCollision m a b = let
+    rv :: V2 Float
+    rv = a^.bVel - b^.bVel
+    velAlongNorm :: Float
+    velAlongNorm = dot rv (m^.mfNormal)
+    e :: Float
+    e = min (a^.bRestitution) (b^.bRestitution)
+    j, j' :: Float
+    j = -(1 + e) * velAlongNorm
+    j' = j / (recip (a^.bMass) + recip (b^.bMass))
+    impulse :: V2 Float
+    impulse = pure j' * (m^.mfNormal)
+    a' = a & bVel -~ (impulse / pure (a^.bMass))
+    b' = b & bVel +~ (impulse / pure (b^.bMass))
+    in if velAlongNorm > 0 then (a,b) else (a',b')
+
+-- Correct floating point error
+positionalCorrection :: Body a -> Body b -> Manifold -> (Body a, Body b)
+positionalCorrection a b Manifold{..} = let
+    percent = 0.4 -- usually 0.2 to 0.8
+    slop = 0.05 -- usually 0.01 to 0.1 (to stop jitters)
+    correction = (max 0 (_mfPenetration - slop) / (a^.bInvMass + b^.bInvMass)) * percent *^ _mfNormal
+    a' = a & bPos -~ ((pure $ a^.bInvMass) * correction)
+    b' = b & bPos +~ ((pure $ b^.bInvMass) * correction)
+    in (a',b')
