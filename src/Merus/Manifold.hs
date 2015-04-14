@@ -33,7 +33,8 @@ manifoldPositionalCorrection :: Body a -> Body b -> Manifold -> (Body a, Body b)
 manifoldPositionalCorrection a b Manifold{..} = let
     slop = 0.05 -- penetration allowance
     percent = 0.4 -- penetration percentage to correct
-    correction = (max 0 (_mfPenetration - slop)) *^ _mfNormal ^* percent
+    imAB = a^.invMass + b^.invMass
+    correction = ((max 0 (_mfPenetration - slop)) / imAB) *^ (_mfNormal ^* percent)
     a' = a & bPos -~ (correction ^* a^.invMass)
     b' = b & bPos +~ (correction ^* b^.invMass)
     in (a',b')
@@ -51,14 +52,17 @@ manifoldApplyImpulse a b mf@Manifold{..} = let
  where
     applyImpulse :: (Body a, Body a) -> V2 Float -> (Body a, Body a)
     applyImpulse (a,b) contact = let
+        -- calculate radii from COM to contact
         ra, rb, rv :: V2 Float
         ra = contact - a^.bPos
         rb = contact - b^.bPos
+        -- relative velocity
         rv = b^.bVel + xrossf' (b^.bAngVel) rb - a^.bVel - xrossf' (a^.bAngVel) ra
+        -- relative velocity along the normal
         contactVel :: Float
         contactVel = dot rv _mfNormal
         raCrossN = xrossv ra _mfNormal
-        rbCrossN = xrossv ra _mfNormal
+        rbCrossN = xrossv rb _mfNormal
         invMassSum = a^.invMass + b^.invMass + (raCrossN^2)  * a^.invInertia + (rbCrossN^2) * b^.invInertia
         -- calculate impulse scalar
         j = (-(1 + _mfE) * contactVel) / invMassSum / count
@@ -66,17 +70,19 @@ manifoldApplyImpulse a b mf@Manifold{..} = let
         a' = bodyApplyImpulse (-impulse) ra a
         b' = bodyApplyImpulse impulse rb b
         -- friction impulse
-        rv' = b^.bVel + xrossf' (b^.bAngVel) rb - a^.bVel - xrossf' (a^.bAngVel) rb
-        t = normalize $ rv - _mfNormal ^* dot rv _mfNormal
+        rv' = b'^.bVel + xrossf' (b'^.bAngVel) rb - a'^.bVel - xrossf' (a'^.bAngVel) rb
+        t = normalize $ rv' - _mfNormal ^* dot rv' _mfNormal
         -- j tangent magnitude
-        jt = -(dot rv t) / invMassSum / count
+        jt = (negate $ dot rv' t) / invMassSum / count
         -- coulumb's law
         tagentImpulse = if abs jt < j * _mfSf then t ^* jt else t ^* ((-j) * _mfDf)
         a'' = bodyApplyImpulse (-tagentImpulse) ra a'
         b'' = bodyApplyImpulse tagentImpulse rb b'
-        in if contactVel > 0 -- dont' apply friction impulses
-            then (a',b')
-            else (a'',b'')
+        -- dont' resolve if velocities are separating
+        -- don't apply friction impulses
+        in if | contactVel > 0 -> (a,b)
+              | nearZero jt -> (a',b')
+              | otherwise -> (a'',b'')
     hasContact x = if (isJust . x) _mfContacts then 1 else 0
     count = hasContact fst + hasContact snd
 

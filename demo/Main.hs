@@ -57,7 +57,7 @@ data Graphic
     = GraphicPoly ColorPoly
     | GraphicCircle ColorCircle
     deriving (Show)
-
+{-
 data Demo = Demo {
     demoSteps :: Int,
     demoRenderer :: Renderer,
@@ -66,9 +66,18 @@ data Demo = Demo {
     demoGravity :: V2 Float,
     demoDeltaTime :: Float
 } deriving (Show)
+-}
+
+data Demo = Demo {
+    demoRenderer :: Renderer,
+    demoWorld :: World
+} deriving (Show)
 
 instance Default Input where
     def = Input False False False False False
+
+instance HasWorld Demo where
+    world = lens demoWorld (\d w -> d{ demoWorld = w })
 
 pollEvents :: MonadIO m => m [Event]
 pollEvents = do
@@ -131,6 +140,14 @@ readInput (e:es) input = readInput es $
         _ -> False
 
 renderDemo :: Demo -> IO ()
+renderDemo d@Demo{..} = do
+    setRenderDrawColor demoRenderer (V4 0x00 0x00 0x00 0xff) 
+    renderClear demoRenderer
+    mapM_ (renderGraphic demoRenderer . flip toGraphic maxBound) $ d^.wBodies
+    renderPresent demoRenderer
+
+{-
+renderDemo :: Demo -> IO ()
 renderDemo Demo{..} = do
     setRenderDrawColor demoRenderer (V4 0x00 0x00 0x00 0xff) 
     renderClear demoRenderer
@@ -140,7 +157,28 @@ renderDemo Demo{..} = do
     renderPresent demoRenderer
  where
     onHit mf color = if isJust mf then V4 0x00 0xff 0x00 0xff else color
+-}
 
+loop :: Demo -> IO ()
+loop d@Demo{..} = do
+    startTick <- ticks
+    events <- pollEvents
+    let Input{..} = readInput (fmap eventPayload events) def
+    let motion = 10
+    let orZero b v n = n + if b then v else 0
+    let move v = v
+            & (_x %~ (orZero inputLeft $ -motion))
+            . (_y %~ (orZero inputUp $ -motion))
+            . (_x %~ (orZero inputRight motion))
+            . (_y %~ (orZero inputDown motion))
+            . (_y %~ (orZero inputDown motion))
+    let d' = d & (world %~ worldStep) . (wBodies %~ (M.adjust (bForce %~ move) 0))
+    renderDemo d'
+    endTick <- ticks
+    delay (delayTime 16 startTick endTick)
+    unless inputExit (loop d')
+
+{-
 loop :: Demo -> IO ()
 loop demo@Demo{..} = do
     startTick <- ticks
@@ -153,7 +191,7 @@ loop demo@Demo{..} = do
             . (_y %~ (orZero inputUp $ -motion))
             . (_x %~ (orZero inputRight motion))
             . (_y %~ (orZero inputDown motion))
-    let c = (head demoBodies) & (bVel %~ move)
+    let c = (demoBodies) & (bVel %~ move)
     let manifolds = map (\s -> bodyToBody s c) (tail demoBodies)
     let demo' = demo { demoManifold = manifolds, demoBodies = c : tail demoBodies }
     let demo'' = makeDemoSteps demo'
@@ -162,11 +200,13 @@ loop demo@Demo{..} = do
     endTick <- ticks
     delay (delayTime 16 startTick endTick)
     unless inputExit (loop demo'')
+-}
 
 delayTime :: Word32 -> Word32 -> Word32 -> Word32
 delayTime goal start end = if frame >= goal then 0 else goal - frame
     where frame = end - start
 
+{-
 makeDemoSteps :: Demo -> Demo
 makeDemoSteps d = iterate stepDemo d !! demoSteps d
 
@@ -175,6 +215,20 @@ stepDemo d@Demo{..} = let
     dt = demoDeltaTime / fromIntegral demoSteps
     bodies = map (integrateVelocity dt demoGravity) demoBodies
     in d { demoBodies = bodies }
+-}
+
+mkDemo :: Renderer -> Demo
+mkDemo ren = let
+    bodies = M.fromList [
+            (0, mkCircle 50 & attr . (bPos .~ V2 100 100) . (bVel .~ (V2 0 80))),
+            (1, mkSquare 10 & attr . (bPos .~ V2 300 350)),
+            (2, mkRect (V2 300 10) & attr . (bPos .~ V2 175 200))
+        ]
+    w = mkWorld & (wBodies .~ bodies)
+    in Demo ren w
+ where
+    attr :: Body Shape -> Body Shape
+    attr = (mass .~ 1) . (bRestitution .~ 0.2) . (bDynamicFriction .~ 0.2) . (bStaticFriction .~ 0.4)
 
 main :: IO ()
 main = do
@@ -186,13 +240,13 @@ main = do
     renderer <- createRenderer window (-1) defaultRenderer
     showWindow window
     screen <- getWindowSurface window
-    let attr :: Body Shape -> Body Shape
-        attr = (mass .~ 1) . (bRestitution .~ 0.8)
+    let demo = mkDemo renderer
+{-
     let demo = Demo {
                 demoDeltaTime = 1 / 60,
                 demoSteps = 10,
                 demoRenderer = renderer,
-                demoGravity = zero, -- V2 0 9.8,
+                demoGravity = V2 0 9.8,
                 demoBodies = [
                     mkCircle 50 & attr . (bPos .~ V2 100 100),
                     mkSquare 10 & attr . (bPos .~ V2 300 350),
@@ -200,6 +254,7 @@ main = do
                 ],
                 demoManifold = replicate (length (demoBodies demo) - 1) Nothing
             }
+-}
     loop demo
     freeSurface screen
     destroyRenderer renderer

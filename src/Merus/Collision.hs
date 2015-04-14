@@ -13,6 +13,9 @@ import Linear.Affine
 import Merus.Types
 import Merus.Math
 
+solveCollision :: (Int, Body Shape) -> (Int, Body Shape) -> Maybe Manifold
+solveCollision (akey,a) (bkey,b) =  ((mfAKey .~ akey) . (mfBKey .~ bkey)) <$> (bodyToBody a b)
+
 polyGetSupport :: Body Poly -> V2 Float -> V2 Float
 polyGetSupport a dir = let
     best = (zero, 1 / 0)

@@ -1,13 +1,20 @@
-{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 module Merus.Types where 
 
-import qualified Data.Vector.Storable as V
+import qualified Data.Vector.Storable as VS
+import qualified Data.Map as M
+import Data.Data
 import Control.Applicative
 import Control.Lens
 import Control.Lens.Indexed
 import Linear
 import Linear.Affine
 import Merus.Math
+import GHC.Generics (Generic1)
 
 data Circle = Circle {
     _cRadius :: Float
@@ -19,8 +26,8 @@ data Rect = Rect {
 
 data Poly = Poly {
     _pU :: M22 Float,
-    _pVertices :: V.Vector (V2 Float),
-    _pNormals :: V.Vector (V2 Float)
+    _pVertices :: VS.Vector (V2 Float),
+    _pNormals :: VS.Vector (V2 Float)
 } deriving (Show, Eq)
 
 data Shape
@@ -36,8 +43,8 @@ data Aabb = Aabb {
 data Manifold = Manifold {
     _mfNormal :: V2 Float,
     _mfPenetration :: Float,
-    _mfA :: Int, -- body A's index
-    _mfB :: Int, -- body B's index
+    _mfAKey :: Int, -- body A
+    _mfBKey :: Int, -- body B
     _mfContacts :: (Maybe (V2 Float), Maybe (V2 Float)), -- points of collision contacts
     _mfE :: Float, -- mixed restitution
     _mfDf :: Float, -- mixed dynamic friction
@@ -65,14 +72,16 @@ data Body a = Body {
     _bDynamicFriction :: Float,
     _bRestitution :: Float,
     _bShape :: a
-}
+} deriving (Eq,Show,Typeable,Generic1)
 
 data World = World {
     _wDeltaTime :: Float,
     _wIterations :: Int,
-    _wBodies :: V.Vector (Body Shape),
+    _wBodies :: M.Map Int (Body Shape),
+    _wBodyKey :: Int,
+    _wGravity :: V2 Float,
     _wManifolds :: [Manifold]
-}
+} deriving (Show, Eq)
 
 --
 
@@ -145,26 +154,6 @@ instance ToAabb (Body Circle) where
 
 instance ToAabb (Body Rect) where
     toAabb a = Aabb (a^.bPos - a^.rRadii) (a^.bPos + a^.rRadii)
-
-instance Show a => Show (Body a) where
-    show Body{..} =
-        "Body {" ++
-        "_bPos = " ++ show _bPos ++
-        ", _bVel = " ++ show _bVel ++
-        ", _bMass = " ++ show _bMass ++
-        ", _bInvMass = " ++ show _bInvMass ++
-        ", _bRestitution = " ++ show _bRestitution ++
-        ", _bShape = " ++ show _bShape ++
-        "}"
-
-instance Eq a => Eq (Body a) where
-    (==) a b =
-        _bPos a == _bPos b &&
-        _bVel a == _bVel b &&
-        _bMass a == _bMass b &&
-        _bInvMass a == _bInvMass b &&
-        _bRestitution a == _bRestitution b &&
-        _bShape a == _bShape b
 
 instance ToShape Shape where
     toShape = id

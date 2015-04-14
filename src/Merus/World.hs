@@ -1,18 +1,29 @@
 module Merus.World where
 
+import qualified Data.Map as M
+import qualified Data.Vector.Storable as VS
+import qualified Data.List as L
 import Control.Lens
 import Linear
 import Merus.Types
+import Merus.Collision
+import Merus.Manifold
+import Data.Maybe
 
 -- Acceleration
 --    F = mA
 -- => A = F * 1/m
+--
 -- Explicit Euler
 -- x += v * dt
 -- v += (1/m * F) * dt
+--
 -- Semi-Implicit (Symplectic) Euler
 -- v += (1/m * F) * dt
 -- x += v * dt
+
+mkWorld :: World
+mkWorld = World (1/60) 1 M.empty 0 (V2 0 9.8) []
 
 integrateForces :: Float -> V2 Float -> Body a -> Body a
 integrateForces dt gravity b@Body{..} = let
@@ -21,7 +32,7 @@ integrateForces dt gravity b@Body{..} = let
     angVel = _bTorque * _bInvInertia * dt / 2
     in if _bInvMass == 0
         then b
-        else b & (bVel +~ vel) -- . (bAngVel +~ angVel)
+        else b & (bVel +~ vel) . (bAngVel +~ angVel)
 
 integrateVelocity :: Float -> V2 Float -> Body a -> Body a
 integrateVelocity dt gravity b@Body{..} = let
@@ -32,114 +43,67 @@ integrateVelocity dt gravity b@Body{..} = let
     in if _bInvMass == 0 then b else integrateForces dt gravity b'
  where ppm = 50 -- pixels per meter
 
-{-
+worldStep :: World -> World
+worldStep w@World{..} = let
+    list :: [(Int, Body Shape)]
+    list = M.toList _wBodies
+    contacts = catMaybes
+        [ solveCollision aentry bentry
+        | (aentry,bodies) <- zip list (tail $ L.tails list)
+        , bentry <- bodies
+        , (snd aentry)^.invMass /= 0 || (snd bentry)^.invMass /= 0
+        ]
+    -- integrate forces
+    bs = M.map (integrateForces _wDeltaTime _wGravity) _wBodies
+    -- initalize collision
+    initStep m = manifoldInitialize _wGravity _wDeltaTime (bs M.! (m^.mfAKey)) (bs M.! (m^.mfBKey)) m
+    contacts' = map initStep contacts
+    -- solve collisions
+    solveStep bods m = let
+        (akey,bkey) = (m^.mfAKey, m^.mfBKey)
+        (a,b) = manifoldApplyImpulse (bs M.! akey) (bs M.! bkey) m
+        in M.insert akey a $ M.insert bkey b $ bods
+    bs' = foldl solveStep bs contacts'
+    -- integrate velocities
+    bs'' = M.map (integrateVelocity _wDeltaTime _wGravity) bs'
+    -- correct positions
+    stepCorrect bods m = let
+        (akey,bkey) = (m^.mfAKey, m^.mfBKey)
+        (a,b) = positionalCorrection (bs'' M.! akey) (bs'' M.! bkey) m
+        in M.insert akey a $ M.insert bkey b $ bods
+    bs''' = foldl solveStep bs'' contacts'
+    -- clear all forces
+    bs'''' = M.map ((bForce .~ zero) . (bTorque .~ 0)) bs'''
+    in w & (wBodies .~ bs'''')
 
-Scene::Scene(f32 dt, uint32 iterations)
-    : m_dt(dt)
-    , m_iterations(iterations)
-    {}
+worldStep'
+    = worldClearForces
+    . worldIntegrateVelocities
+    . worldGenCollisionInfo
 
-void Scene::Step()
-{
-  -- Generate new collision info
-  contacts.clear();
-  for(uint32 i = 0; i < bodies.size(); ++i)
-  {
-    Body *A = bodies[i];
+worldGenCollisionInfo :: World -> World
+worldGenCollisionInfo w@World{..} = w & wManifolds .~ mfs
+ where
+    list = M.toList _wBodies
+    mfs = catMaybes [
+            solveCollision aentry bentry |
+            (aentry,bodies) <- zip list (tail $ L.tails list),
+            bentry <- bodies,
+            (snd aentry)^.invMass /= 0 || (snd bentry)^.invMass /= 0
+        ]
 
-    for(uint32 j = i + 1; j < bodies.size(); ++j)
-    {
-      Body *B = bodies[j];
-      if(A->im == 0 && B->im == 0)
-        continue;
-      Manifold m;
-      Manifold::Solve(A, i, B, j, m);
-      if(m.contact_count)
-        contacts.emplace_back(m);
-    }
-  }
+worldIntegrateForces :: World -> World 
+worldIntegrateForces w = w & wBodies %~ (M.map (integrateForces (w^.wDeltaTime) (w^.wGravity)))
 
-  -- Integrate forces
-  for(uint32 i = 0; i < bodies.size(); ++i)
-    IntegrateForces(bodies[i], m_dt);
+worldInitializeCollision :: World -> World
+worldInitializeCollision w@World{..} = w & wManifolds %~ (map step)
+    where step m = manifoldInitialize _wGravity _wDeltaTime (_wBodies M.! (m^.mfAKey)) (_wBodies M.! (m^.mfBKey)) m
 
-  -- Initialize collision
-  for(uint32 i = 0; i < contacts.size(); ++i) {
-    Manifold &contact = contacts[i];
-    contact.Initialize(bodies[contact.a], bodies[contact.b]);
-  }
+worldIntegrateVelocities :: World -> World
+worldIntegrateVelocities w = w & wBodies %~ (M.map (integrateVelocity (w^.wDeltaTime) (w^.wGravity)))
 
-  -- Solve collisions
-  for(uint32 j = 0; j < m_iterations; ++j)
-    for(uint32 i = 0; i < contacts.size(); ++i) {
-    Manifold &contact = contacts[i];
-    contact.ApplyImpulse(bodies[contact.a], bodies[contact.b]);
-  }
+worldClearForces :: World -> World
+worldClearForces = wBodies %~ (M.map ((bForce .~ zero) . (bTorque .~ 0)))
 
-  -- Integrate velocities
-  for(uint32 i = 0; i < bodies.size(); ++i)
-    IntegrateVelocity(bodies[i], m_dt);
-
-  -- Correct positions
-  for(uint32 i = 0; i < contacts.size(); ++i) {
-    Manifold &contact = contacts[i];
-    contact.PositionalCorrection(bodies[contact.a], bodies[contact.b]);
-  }
-
-  -- Clear all forces
-  for(uint32 i = 0; i < bodies.size(); ++i)
-  {
-    Body *b = bodies[i];
-    b->force.SetXY(0, 0);
-    b->torque = 0;
-  }
-}
-
-void Scene::Render()
-{
-  for(uint32 i = 0; i < bodies.size(); ++i)
-  {
-    Body *b = bodies[i];
-    b->shape.Draw(b);
-  }
-
-  glPointSize(4.0f);
-  glBegin(GL_POINTS);
-  glColor3f(1.0f, 0.0f, 0.0f);
-  for(uint32 i = 0; i < contacts.size(); ++i)
-  {
-    Manifold& m = contacts[i];
-    for(uint32 j = 0; j < m.contact_count; ++j)
-    {
-      Vec2 c = m.contacts[j];
-      glVertex2f(c.x, c.y);
-    }
-  }
-  glEnd();
-  glPointSize(1.0f);
-
-  glBegin(GL_LINES);
-  glColor3f(0.0f, 1.0f, 0.0f);
-  for(uint32 i = 0; i < contacts.size(); ++i)
-  {
-    Manifold& m = contacts[i];
-    Vec2 n = m.normal;
-    for(uint32 j = 0; j < m.contact_count; ++j)
-    {
-      Vec2 c = m.contacts[j];
-      glVertex2f(c.x, c.y);
-      n.withScalarMul(0.75f);
-      c += n;
-      glVertex2f(c.x, c.y);
-    }
-  }
-  glEnd();
-}
-
-Body *Scene::Add(Shape shape, uint32 x, uint32 y)
-{
-  Body *b = new Body(shape, x, y);
-  bodies.push_back(b);
-  return b;
-}
--}
+worldAddBody :: Body Shape -> World -> World
+worldAddBody a w@World{..} = w & (wBodies .~ (M.insert _wBodyKey a _wBodies)) . (wBodyKey .~ (_wBodyKey + 1)) 
