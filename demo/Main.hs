@@ -113,6 +113,8 @@ renderColorPoly :: Renderer -> ColorPoly -> IO ()
 renderColorPoly ren ColorPoly{..} = do
     setRenderDrawColor ren cpColor
     renderDrawLines ren cpVertices
+    let vert i = cpVertices V.! i
+    renderDrawLine ren (vert $ V.length cpVertices - 1) (vert 0)
 
 readInput :: [EventPayload] -> Input -> Input
 readInput [] input = input

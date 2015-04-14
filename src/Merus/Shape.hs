@@ -40,7 +40,7 @@ computePolygonMass density a = let
 polySetBox :: Float -> Float -> Poly -> Poly
 polySetBox hw hh p = let
     verts = V.fromListN 4 [
-            V2 (-hw) hh,
+            V2 (-hw) (-hh),
             V2 hw (-hh),
             V2 hw hh,
             V2 (-hw) hh
