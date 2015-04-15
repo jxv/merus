@@ -23,7 +23,7 @@ import Data.Maybe
 -- x += v * dt
 
 mkWorld :: World
-mkWorld = World (1/60) 1 M.empty 0 (V2 0 9.8) []
+mkWorld = World (1/60) 10 M.empty 0 (V2 0 9.8) []
 
 integrateForces :: Float -> V2 Float -> Body a -> Body a
 integrateForces dt gravity b@Body{..} = let
@@ -37,12 +37,12 @@ integrateForces dt gravity b@Body{..} = let
 integrateVelocity :: Float -> V2 Float -> Body a -> Body a
 integrateVelocity dt gravity b@Body{..} = let
     pos :: V2 Float
-    pos = (_bVel ^* dt)
+    pos = _bVel ^* dt
     orient = _bAngVel * dt
     b' = b & (bPos +~ pos) . (bOrient +~ orient)
     in if _bInvMass == 0 then b else integrateForces dt gravity b'
- where ppm = 50 -- pixels per meter
 
+{-
 worldStep :: World -> World
 worldStep w@World{..} = let
     list :: [(Int, Body Shape)]
@@ -75,11 +75,16 @@ worldStep w@World{..} = let
     -- clear all forces
     bs'''' = M.map ((bForce .~ zero) . (bTorque .~ 0)) bs'''
     in w & (wBodies .~ bs'''')
+-}
 
-worldStep'
+worldStep :: World -> World
+worldStep
     = worldClearForces
+    . worldCorrectPositions
     . worldIntegrateVelocities
     . worldSolveCollisions
+    . worldInitializeCollisions
+    . worldIntegrateForces
     . worldGenCollisionInfo
 
 worldGenCollisionInfo :: World -> World
@@ -96,13 +101,14 @@ worldGenCollisionInfo w@World{..} = w & wManifolds .~ mfs
 worldIntegrateForces :: World -> World 
 worldIntegrateForces w = w & wBodies %~ (M.map (integrateForces (w^.wDeltaTime) (w^.wGravity)))
 
-worldInitializeCollision :: World -> World
-worldInitializeCollision w@World{..} = w & wManifolds %~ (map step)
+worldInitializeCollisions :: World -> World
+worldInitializeCollisions w@World{..} = w & wManifolds %~ (map step)
     where step m = manifoldInitialize _wGravity _wDeltaTime (_wBodies M.! (m^.mfAKey)) (_wBodies M.! (m^.mfBKey)) m
 
 worldSolveCollisions :: World -> World
-worldSolveCollisions w = w & wBodies .~ (foldl step (w^.wBodies) (w^.wManifolds))
+worldSolveCollisions w = (iterate stepper w) !! (w^.wIterations)
  where
+    stepper v = v & wBodies .~ (foldl step (v^.wBodies) (v^.wManifolds))
     step bodies m = let
         (akey,bkey) = (m^.mfAKey, m^.mfBKey)
         (a,b) = manifoldApplyImpulse (bodies M.! akey) (bodies M.! bkey) m

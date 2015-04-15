@@ -104,21 +104,22 @@ circleToCircle :: Body Circle -> Body Circle -> Maybe Manifold
 circleToCircle a b = let
     -- translational vector is the normal
     normal = b^.bPos - a^.bPos
-    distFromBothPos = norm normal
+    distSqr = qd normal normal
+    dist = sqrt distSqr
     rad = a^.cRadius + b^.cRadius
     rad2 = rad^(2 :: Int)
-    in if dot normal normal < rad2
+    in if distSqr >= rad2
         then Nothing -- Not in contact
-        else Just $ if distFromBothPos == 0
+        else Just $ if distSqr == 0
             then let
                 penetration = a^.cRadius
                 normal' = V2 1 0
                 contacts = (Just $ a^.bPos, Nothing)
                 in (mkManifold normal' penetration) & mfContacts .~ contacts
             else let
-                penetration = rad - distFromBothPos
-                normal' = normal ^/ distFromBothPos
-                contacts = (Just $ normal' ^* (a^.cRadius) * (a^.bPos), Nothing)
+                penetration = rad - dist
+                normal' = normal ^/ dist
+                contacts = (Just $ (normal' ^* (a^.cRadius)) + (a^.bPos), Nothing)
                 in (mkManifold normal' penetration) & mfContacts .~ contacts
 {-# INLINE circleToCircle #-}
 {-
@@ -137,7 +138,6 @@ circleToCircle a b = let
             then mkManifold (V2 (n^._x / d) (n^._y / d)) (rad2 - d)
             else mkManifold (V2 1 0) (a^.cRadius)
 -}
-
 
 ifoldlM' f z0 xs = V.ifoldr f' return xs z0
   where f' i x k z = f i z x >>= k
@@ -194,6 +194,7 @@ circleToPoly a b = do
             | otherwise -> closestToFace)
 {-# INLINE circleToPoly #-}
 
+{-
 rectToCircle :: Body Rect -> Body Circle -> Maybe Manifold
 rectToCircle a b = let
     inside :: Bool
@@ -217,17 +218,18 @@ rectToCircle a b = let
         then Nothing
         else Just $ mkManifold (if inside then -n else n) (r + d)
 {-# INLINE rectToCircle #-}
+-}
 
 polyToPoly :: Body Poly -> Body Poly -> Maybe Manifold
 polyToPoly a b = do
     -- Check for a separating axis with A's face planes
     let (faceA, penetrationA) = findAxisLeastPenetration a b
-    guard $ penetrationA < 0 
+    guard . not $ penetrationA >= 0 
     -- Check for a separating axis with B's face planes
     let (faceB, penetrationB) = findAxisLeastPenetration b a
-    guard $ penetrationB < 0 
+    guard . not $ penetrationB >= 0 
     -- Determine which shape contains reference face
-    let (ref, inc, refIdx, flip) = if biasGreaterThan penetrationA penetrationB
+    let (ref, inc, refIdx, flip') = if biasGreaterThan penetrationA penetrationB
             then (a, b, faceA, False)
             else (b, a, faceB, True)
     let refIdx' = if refIdx + 1 == V.length (ref^.pVertices) then 0 else refIdx + 1
@@ -242,7 +244,7 @@ polyToPoly a b = do
         v2' = (ref^.pU) !* v2 + ref^.bPos
     -- Calculate reference face side normal in world space
     let sidePlaneNormal :: V2 Float
-        sidePlaneNormal = v2' - v1'
+        sidePlaneNormal = normalize $ v2' - v1'
     -- Orthogonalize
     let refFaceNormal = V2 (sidePlaneNormal^._y) (-sidePlaneNormal^._x)
     -- ax + by = c
@@ -251,10 +253,11 @@ polyToPoly a b = do
         negSide = negate $ dot sidePlaneNormal v1'
         posSide = dot sidePlaneNormal v2'
     -- Clip incident face to reference face side planes
-    guard $ clip (-sidePlaneNormal) negSide incFace /= (Nothing,Nothing)
-    guard $ clip sidePlaneNormal posSide incFace /= (Nothing,Nothing)
+    let isTwo (a,b) = isJust a && isJust b
+    guard . not $ isTwo $ clip (-sidePlaneNormal) negSide incFace
+    guard . not $ isTwo $ clip sidePlaneNormal posSide incFace
     -- Flip
-    let normal = if flip then -refFaceNormal else refFaceNormal
+    let normal = if flip' then -refFaceNormal else refFaceNormal
     -- Keep points behinds reference face
     let separation = dot refFaceNormal (fst incFace) - refC
     let (penetration, mcontact) =
@@ -274,6 +277,7 @@ polyToPoly a b = do
     else Just $ mkManifold normal penetration' & mfContacts .~ (mcontact, mcontact')
 {-# INLINE polyToPoly #-}
 
+{-
 rectToRect :: Body Rect -> Body Rect -> Maybe Manifold
 rectToRect a b = let
     n :: V2 Float
@@ -287,6 +291,7 @@ rectToRect a b = let
             then mkManifold (if n^._x < 0 then V2 (-1) 0 else zero) (overlap^._x)
             else mkManifold (if n^._y < 0 then V2 0 (-1) else V2 0 1) (overlap^._y)
 {-# INLINE rectToRect #-}
+-}
 
 bodyToBody :: (ToShape a, ToShape b) => Body a -> Body b -> Maybe Manifold
 bodyToBody a b = b2b (fmap toShape a) (fmap toShape b)

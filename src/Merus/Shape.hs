@@ -56,6 +56,16 @@ polySetBox hw hh p = let
 polyEmpty :: Poly
 polyEmpty = Poly identity V.empty V.empty
 
+shapeSetOrient :: Float -> Shape -> Shape
+shapeSetOrient orient (ShapePoly p) = toShape $ (p & pU .~ setByOrient orient)
+shapeSetOrient _ s = s
+
+setByOrient :: Float -> M22 Float
+setByOrient radians = let
+    c = cos radians
+    s = sin radians
+    in V2 (V2 c (-s)) (V2 s c)
+
 mkBody :: a -> Body a
 mkBody = Body Dynamic nil nil nil nil nil nil nil nil nil nil nil nil nil
  where

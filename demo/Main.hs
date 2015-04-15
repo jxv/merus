@@ -57,16 +57,6 @@ data Graphic
     = GraphicPoly ColorPoly
     | GraphicCircle ColorCircle
     deriving (Show)
-{-
-data Demo = Demo {
-    demoSteps :: Int,
-    demoRenderer :: Renderer,
-    demoBodies :: [Body Shape],
-    demoManifold :: [Maybe Manifold],
-    demoGravity :: V2 Float,
-    demoDeltaTime :: Float
-} deriving (Show)
--}
 
 data Demo = Demo {
     demoRenderer :: Renderer,
@@ -86,15 +76,18 @@ pollEvents = do
         Nothing -> return []
         Just event -> return (event:) `ap` pollEvents
 
+scaleGraphic :: Num a => a -> a
+scaleGraphic = (*) 10
+
 polyGraphic :: V.Vector (V2 Float) -> V4 Word8 -> ColorPoly
-polyGraphic verts color = ColorPoly (V.map (P . fmap round) $ verts) color
+polyGraphic verts color = ColorPoly (V.map (P . fmap round . scaleGraphic) $ verts) color
 
 circleGraphic :: V2 Float -> Float -> Int -> V4 Word8 -> ColorCircle
 circleGraphic center radius segs color = let
     tau = 2 * pi
     cen = fmap round center
     angles = fmap (\i -> fromIntegral i * tau / fromIntegral (segs - 1)) [0..(segs - 1)]
-    cons theta = P $ fmap round (center + V2 (cos theta * radius) (sin theta * radius))
+    cons theta = P $ fmap (round . scaleGraphic) (center + V2 (cos theta * radius) (sin theta * radius))
     points = fmap cons angles
     in ColorCircle center radius segs color (V.fromListN segs points)
 
@@ -146,25 +139,12 @@ renderDemo d@Demo{..} = do
     mapM_ (renderGraphic demoRenderer . flip toGraphic maxBound) $ d^.wBodies
     renderPresent demoRenderer
 
-{-
-renderDemo :: Demo -> IO ()
-renderDemo Demo{..} = do
-    setRenderDrawColor demoRenderer (V4 0x00 0x00 0x00 0xff) 
-    renderClear demoRenderer
-    renderGraphic demoRenderer $ toGraphic (head demoBodies) (V4 0xff 0xff 0xff 0xff)
-    forM_ (zip demoManifold $ tail demoBodies) $ \(mf, b) -> 
-        renderGraphic demoRenderer $ toGraphic b (onHit mf $ V4 0x00 0x00 0xff 0xff)
-    renderPresent demoRenderer
- where
-    onHit mf color = if isJust mf then V4 0x00 0xff 0x00 0xff else color
--}
-
 loop :: Demo -> IO ()
 loop d@Demo{..} = do
     startTick <- ticks
     events <- pollEvents
     let Input{..} = readInput (fmap eventPayload events) def
-    let motion = 10
+    let motion = 150
     let orZero b v n = n + if b then v else 0
     let move v = v
             & (_x %~ (orZero inputLeft $ -motion))
@@ -172,58 +152,25 @@ loop d@Demo{..} = do
             . (_x %~ (orZero inputRight motion))
             . (_y %~ (orZero inputDown motion))
             . (_y %~ (orZero inputDown motion))
-    let d' = d & (world %~ worldStep) . (wBodies %~ (M.adjust (bForce %~ move) 0))
+    let d' = d & (world %~ worldStep) . (wBodies %~ (M.adjust (bForce %~ move) 1))
     renderDemo d'
     endTick <- ticks
     delay (delayTime 16 startTick endTick)
     unless inputExit (loop d')
 
-{-
-loop :: Demo -> IO ()
-loop demo@Demo{..} = do
-    startTick <- ticks
-    events <- pollEvents
-    let Input{..} = readInput (fmap eventPayload events) def
-    let motion = 10
-    let orZero b v n = n + if b then v else 0
-    let move v = v
-            & (_x %~ (orZero inputLeft $ -motion))
-            . (_y %~ (orZero inputUp $ -motion))
-            . (_x %~ (orZero inputRight motion))
-            . (_y %~ (orZero inputDown motion))
-    let c = (demoBodies) & (bVel %~ move)
-    let manifolds = map (\s -> bodyToBody s c) (tail demoBodies)
-    let demo' = demo { demoManifold = manifolds, demoBodies = c : tail demoBodies }
-    let demo'' = makeDemoSteps demo'
-    unless (manifolds == demoManifold) $ print manifolds
-    renderDemo demo''
-    endTick <- ticks
-    delay (delayTime 16 startTick endTick)
-    unless inputExit (loop demo'')
--}
-
 delayTime :: Word32 -> Word32 -> Word32 -> Word32
 delayTime goal start end = if frame >= goal then 0 else goal - frame
     where frame = end - start
 
-{-
-makeDemoSteps :: Demo -> Demo
-makeDemoSteps d = iterate stepDemo d !! demoSteps d
-
-stepDemo :: Demo -> Demo
-stepDemo d@Demo{..} = let
-    dt = demoDeltaTime / fromIntegral demoSteps
-    bodies = map (integrateVelocity dt demoGravity) demoBodies
-    in d { demoBodies = bodies }
--}
-
 mkDemo :: Renderer -> Demo
 mkDemo ren = let
-    bodies = M.fromList [
-            (0, mkCircle 50 & attr . (bPos .~ V2 100 100) . (bVel .~ (V2 0 80))),
-            (1, mkSquare 10 & attr . (bPos .~ V2 300 350)),
-            (2, mkRect (V2 300 10) & attr . (bPos .~ V2 175 200))
-        ]
+    circles = [mkCircle 1 & attr . (bPos .~ V2 (fromIntegral i) 5) | i <- [4,16..64]]
+    polys = []
+    others = zip [2..] $ circles ++ polys
+    bodies = M.fromList $ [
+            (0, bodySetStatic $  mkCircle 5 & attr . (bPos .~ V2 32.5 17)),
+            (1, bodySetStatic $ mkRect (V2 30 1) & attr . (bPos .~ V2 34 30))
+        ] ++ others
     w = mkWorld & (wBodies .~ bodies)
     in Demo ren w
  where
@@ -241,20 +188,6 @@ main = do
     showWindow window
     screen <- getWindowSurface window
     let demo = mkDemo renderer
-{-
-    let demo = Demo {
-                demoDeltaTime = 1 / 60,
-                demoSteps = 10,
-                demoRenderer = renderer,
-                demoGravity = V2 0 9.8,
-                demoBodies = [
-                    mkCircle 50 & attr . (bPos .~ V2 100 100),
-                    mkSquare 10 & attr . (bPos .~ V2 300 350),
-                    mkRect (V2 300 10) & attr . (bPos .~ V2 175 200)
-                ],
-                demoManifold = replicate (length (demoBodies demo) - 1) Nothing
-            }
--}
     loop demo
     freeSurface screen
     destroyRenderer renderer
