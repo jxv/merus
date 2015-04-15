@@ -61,7 +61,7 @@ worldStep w@World{..} = let
     -- solve collisions
     solveStep bods m = let
         (akey,bkey) = (m^.mfAKey, m^.mfBKey)
-        (a,b) = manifoldApplyImpulse (bs M.! akey) (bs M.! bkey) m
+        (a,b) = manifoldApplyImpulse (bods M.! akey) (bods M.! bkey) m
         in M.insert akey a $ M.insert bkey b $ bods
     bs' = foldl solveStep bs contacts'
     -- integrate velocities
@@ -69,9 +69,9 @@ worldStep w@World{..} = let
     -- correct positions
     stepCorrect bods m = let
         (akey,bkey) = (m^.mfAKey, m^.mfBKey)
-        (a,b) = positionalCorrection (bs'' M.! akey) (bs'' M.! bkey) m
+        (a,b) = positionalCorrection (bods M.! akey) (bods M.! bkey) m
         in M.insert akey a $ M.insert bkey b $ bods
-    bs''' = foldl solveStep bs'' contacts'
+    bs''' = foldl stepCorrect bs'' contacts'
     -- clear all forces
     bs'''' = M.map ((bForce .~ zero) . (bTorque .~ 0)) bs'''
     in w & (wBodies .~ bs'''')
@@ -79,6 +79,7 @@ worldStep w@World{..} = let
 worldStep'
     = worldClearForces
     . worldIntegrateVelocities
+    . worldSolveCollisions
     . worldGenCollisionInfo
 
 worldGenCollisionInfo :: World -> World
@@ -99,11 +100,27 @@ worldInitializeCollision :: World -> World
 worldInitializeCollision w@World{..} = w & wManifolds %~ (map step)
     where step m = manifoldInitialize _wGravity _wDeltaTime (_wBodies M.! (m^.mfAKey)) (_wBodies M.! (m^.mfBKey)) m
 
+worldSolveCollisions :: World -> World
+worldSolveCollisions w = w & wBodies .~ (foldl step (w^.wBodies) (w^.wManifolds))
+ where
+    step bodies m = let
+        (akey,bkey) = (m^.mfAKey, m^.mfBKey)
+        (a,b) = manifoldApplyImpulse (bodies M.! akey) (bodies M.! bkey) m
+        in M.insert akey a $ M.insert bkey b $ bodies
+
 worldIntegrateVelocities :: World -> World
 worldIntegrateVelocities w = w & wBodies %~ (M.map (integrateVelocity (w^.wDeltaTime) (w^.wGravity)))
+
+worldCorrectPositions :: World -> World
+worldCorrectPositions w = w & wBodies .~ (foldl step (w^.wBodies) (w^.wManifolds))
+ where
+    step bodies m = let
+        (akey,bkey) = (m^.mfAKey, m^.mfBKey)
+        (a,b) = positionalCorrection (bodies M.! akey) (bodies M.! bkey) m
+        in M.insert akey a $ M.insert bkey b $ bodies
 
 worldClearForces :: World -> World
 worldClearForces = wBodies %~ (M.map ((bForce .~ zero) . (bTorque .~ 0)))
 
 worldAddBody :: Body Shape -> World -> World
-worldAddBody a w@World{..} = w & (wBodies .~ (M.insert _wBodyKey a _wBodies)) . (wBodyKey .~ (_wBodyKey + 1)) 
+worldAddBody a w@World{..} = w & (wBodies .~ (M.insert _wBodyKey a _wBodies)) . (wBodyKey .~ (_wBodyKey + 1))
